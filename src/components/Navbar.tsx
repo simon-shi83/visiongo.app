@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, Menu, X, ArrowRight } from 'lucide-react';
+import { ChevronDown, Menu, X, ArrowRight, User } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { getProducts } from '../data/products';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 
 interface NavbarProps {
   currentPath: string;
@@ -13,6 +14,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenContact }) => {
   const { t, locale } = useLanguage();
+  const { user } = useAuth();
   const products = getProducts(locale);
 
   const [isScrolled, setIsScrolled] = useState(false);
@@ -53,7 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
         {/* Brand Logo */}
         <button
           onClick={() => onNavigate('/')}
-          className="flex items-center gap-3 group text-left focus:outline-none"
+          className="flex items-center gap-3 group text-left focus:outline-none cursor-pointer"
         >
           <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700/80 flex items-center justify-center transition-colors group-hover:border-emerald-500/50">
             <svg
@@ -87,7 +89,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
           >
             <button
               onClick={() => setProductsDropdownOpen(!productsDropdownOpen)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                 currentPath.startsWith('/products')
                   ? 'text-white bg-zinc-900'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-900/50'
@@ -114,7 +116,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
                         setProductsDropdownOpen(false);
                         onNavigate(`/products/${product.slug}`);
                       }}
-                      className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/60 transition-colors flex items-start gap-3 group"
+                      className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800/60 transition-colors flex items-start gap-3 group cursor-pointer"
                     >
                       <div
                         className="w-7 h-7 rounded-md flex items-center justify-center text-xs font-mono font-bold mt-0.5"
@@ -159,7 +161,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
               <button
                 key={link.path}
                 onClick={() => onNavigate(link.path)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   isActive
                     ? 'text-white bg-zinc-900'
                     : 'text-zinc-400 hover:text-white hover:bg-zinc-900/50'
@@ -186,9 +188,32 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
             <GithubIcon className="w-4 h-4" />
           </a>
 
+          {/* My VISIONGO / Sign In Button */}
+          {user ? (
+            <button
+              onClick={() => onNavigate('/my')}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-medium text-zinc-200 hover:text-white bg-zinc-900 border border-zinc-700/80 hover:border-emerald-500/50 transition-all cursor-pointer"
+            >
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt="Avatar" className="w-4 h-4 rounded-full object-cover" />
+              ) : (
+                <User className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>My VISIONGO</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => onNavigate('/my')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors cursor-pointer"
+            >
+              <User className="w-3.5 h-3.5 text-zinc-500" />
+              <span>{locale === 'zh' ? '登录' : 'Sign In'}</span>
+            </button>
+          )}
+
           <button
             onClick={onOpenContact}
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all font-mono"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all font-mono cursor-pointer"
           >
             {t.nav.contactEngineering}
             <ArrowRight className="w-3.5 h-3.5" />
@@ -249,13 +274,24 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
             ))}
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onNavigate('/my');
+              }}
+              className="w-full py-2.5 rounded-lg text-xs font-mono font-medium bg-zinc-900 border border-zinc-700/80 text-zinc-200 hover:text-white transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <User className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{user ? 'My VISIONGO' : (locale === 'zh' ? '登录 / 注册' : 'Sign In')}</span>
+            </button>
+
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
                 onOpenContact();
               }}
-              className="w-full py-2.5 rounded-lg text-xs font-mono font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-colors text-center"
+              className="w-full py-2.5 rounded-lg text-xs font-mono font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-colors text-center cursor-pointer"
             >
               {t.nav.contactEngineering}
             </button>

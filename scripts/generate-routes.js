@@ -59,6 +59,16 @@ const routes = [
     title: 'About VISIONGO — Industrial Vision Intelligence',
     description: 'Product-first software company engineering the next generation of industrial vision systems with AI.',
   },
+  {
+    path: 'privacy',
+    title: 'Privacy Policy | VISIONGO — Industrial Vision Intelligence',
+    description: 'VISIONGO privacy policy governing website access, anonymous download analytics, and Google authentication.',
+  },
+  {
+    path: 'terms',
+    title: 'Terms of Use | VISIONGO — Industrial Vision Intelligence',
+    description: 'Terms of Use governing the VISIONGO web platform, software evaluations, downloads, and account services.',
+  },
 ];
 
 for (const route of routes) {

@@ -11,7 +11,11 @@ import { AboutPage } from './pages/AboutPage';
 import { DownloadsPage } from './pages/DownloadsPage';
 import { ContactPage } from './pages/ContactPage';
 import { DownloadableProduct } from './types/downloads';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
+import { TermsOfUsePage } from './pages/TermsOfUsePage';
+import { AccountPage } from './pages/AccountPage';
 import { LanguageProvider } from './i18n/LanguageContext';
+import { AuthProvider } from './context/AuthContext';
 
 const AppContent: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(window.location.pathname || '/');
@@ -82,6 +86,13 @@ const AppContent: React.FC = () => {
     switch (currentPath) {
       case '/contact':
         return <ContactPage />;
+      case '/privacy':
+        return <PrivacyPolicyPage />;
+      case '/terms':
+        return <TermsOfUsePage />;
+      case '/my':
+      case '/account':
+        return <AccountPage onNavigate={navigate} />;
       case '/solutions':
         return (
           <SolutionsPage
@@ -131,9 +142,11 @@ const AppContent: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <LanguageProvider>
-      <AppContent />
-    </LanguageProvider>
+    <AuthProvider>
+      <LanguageProvider>
+        <AppContent />
+      </LanguageProvider>
+    </AuthProvider>
   );
 };
 

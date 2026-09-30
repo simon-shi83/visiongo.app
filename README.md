@@ -23,24 +23,32 @@ The VISIONGO web platform is an enterprise-grade, product-first technical websit
                            /              |              \
                           /               |               \
    +-----------------------+   +-------------------+   +--------------------+
-   |   Static Assets / UI  |   | /api/releases     |   | /api/download      |
-   | (React 19 + Tailwind) |   | /api/contact      |   | (Secure Proxy)     |
-   +-----------------------+   +-------------------+   +--------------------+
-                                          |                       |
-                                          | Non-blocking          | Authenticated Stream
-                                          v                       v
-                              +-----------------------+   +--------------------+
-                              | Workers Analytics     |   | Private GitHub     |
-                              | Engine Dataset        |   | Releases REST API  |
-                              | (visiongo_downloads)  |   | (PAT read-only)    |
-                              +-----------------------+   +--------------------+
+   |   Static Assets / UI  |   | Edge APIs         |   | /api/download      |
+   | (React 19 + Tailwind) |   | /api/releases     |   | (Secure Proxy)     |
+   | Prerendered Snapshots |   | /api/auth/*       |   +--------------------+
+   +-----------------------+   | /api/contact      |              |
+                               +-------------------+              | Authenticated
+                                   /           \                  | Stream
+                    Non-blocking  /             \ D1 Queries      v
+                                 v               v             +--------------------+
+                     +-------------------+  +---------------+  | Private GitHub     |
+                     | Workers Analytics |  | Cloudflare D1 |  | Releases REST API  |
+                     | Engine Dataset    |  | Database (DB) |  | (PAT read-only)    |
+                     | visiongo_downloads|  | Users/History |  +--------------------+
+                     +-------------------+  +---------------+
 ```
 
 ### Core Architectural Guarantees
-1. **Zero Client Token Exposure**: Private GitHub tokens and analytics secrets NEVER reach browser JavaScript.
-2. **Strict Repository Whitelist**: The download proxy strictly validates product names (`visionstudio`, `visionruntime`, `visionedge`) and numeric asset IDs, rejecting arbitrary URL proxying.
-3. **Graceful Fallback**: If GitHub APIs or network uplinks are temporarily unavailable, the Downloads UI renders high-fidelity evaluation builds rather than breaking.
+1. **Zero Client Token Exposure**: Private GitHub tokens, OAuth secrets, and analytics secrets NEVER reach browser JavaScript.
+2. **Strict Direct Route & API Isolation**:
+   - Important public pages (`/`, `/downloads`, `/contact`, `/privacy`, `/terms`, etc.) are directly accessible with instant HTTP 200 without unnecessary redirects or requiring homepage navigation.
+   - Non-existent `/api/*` endpoints strictly return `HTTP 404 JSON`, never falling back to the SPA HTML document.
+   - Non-existent `/assets/*` files strictly return `HTTP 404 Plain Text`, preventing script syntax errors.
+3. **Anonymous Downloads Preserved**: Software downloads remain 100% accessible anonymously without requiring Google authentication.
 4. **Air-Gapped Industrial Guarantee**: Communicates clearly that VISIONGO core runtimes run 100% offline in air-gapped factory environments.
+5. **Data Minimization & Privacy**:
+   - Zero raw IP addresses stored in analytics (uses server-side HMAC-SHA256 pseudonymous hashing).
+   - Zero Google password handling (uses official Google Identity Services with minimal scopes: `openid`, `email`, `profile`).
 
 ---
 
@@ -61,22 +69,21 @@ The VISIONGO web platform is an enterprise-grade, product-first technical websit
 
 - **Frontend Core**: React 19 + TypeScript (Strict Mode)
 - **Styling**: Tailwind CSS with custom industrial tokens (`Plus Jakarta Sans` + `JetBrains Mono`)
+- **Authentication**: Official Google Identity Services (GIS) / OpenID Connect + signed HttpOnly sessions
+- **Storage**: Cloudflare D1 SQL database (`visiongo_db`) for users and download history
+- **Analytics**: Cloudflare Workers Analytics Engine (`visiongo_downloads`)
 - **Routing**: Client-side history routing with static route prerendering for SEO
-- **Markdown**: Injection-safe custom AST parser (no unsafe `dangerouslySetInnerHTML`)
-- **Serverless Runtime**: Cloudflare Workers with Workers Assets & Analytics Engine
+- **Markdown**: Custom injection-safe AST parser (no unsafe `dangerouslySetInnerHTML`)
+- **Edge Deployment**: Cloudflare Workers with Static Assets & Node.js compatibility
 - **CI/CD**: GitHub Actions deploying to `simon-shi83/website` on `main` branch
 
 ---
 
 ## 4. Environment & Secrets Configuration
 
-Create a `.dev.vars` file for local development (or use `.env.example` as a template):
+A configuration template is provided in [`.env.example`](.env.example).
 
-```bash
-cp .env.example .dev.vars
-```
-
-### Required Configuration Matrix
+### Configuration Matrix
 
 | Variable / Secret | Type | Location | Description |
 | :--- | :--- | :--- | :--- |
@@ -86,112 +93,120 @@ cp .env.example .dev.vars
 | `VISIONRUNTIME_REPO` | Variable | Worker Env | Private repository name for VisionRuntime (default: `VisionRuntime`). |
 | `VISIONEDGE_REPO` | Variable | Worker Env | Private repository name for VisionEdge (default: `VisionEdge`). |
 | `DOWNLOAD_ANALYTICS_SECRET` | Secret | Cloudflare Secret | Cryptographic salt used for pseudonymous HMAC visitor deduplication. |
+| `GOOGLE_CLIENT_ID` | Variable/Secret | Cloudflare Secret | Google OAuth 2.0 Web Client ID from Google Cloud Console. |
+| `SESSION_SECRET` | Secret | Cloudflare Secret | Cryptographic key used to sign `vg_session` HttpOnly session cookies. |
 | `DOWNLOADS_CACHE_TTL_SEC` | Variable | Worker Env | In-worker cache TTL for release metadata (default: `600` seconds). |
 
 ### Configuring Secrets in Cloudflare Workers
 
-#### Via Wrangler CLI:
 ```bash
-# 1. Set the GitHub release token
+# 1. GitHub private releases token
 npx wrangler secret put GITHUB_RELEASE_TOKEN
-# (Paste your token when prompted)
 
-# 2. Set the download analytics HMAC salt
+# 2. Download analytics HMAC salt
 npx wrangler secret put DOWNLOAD_ANALYTICS_SECRET
-# (Paste a secure random 32+ character string)
+
+# 3. Session cookie signing secret
+npx wrangler secret put SESSION_SECRET
+
+# 4. Optional: Google OAuth Web Client ID
+npx wrangler secret put GOOGLE_CLIENT_ID
 ```
-
-#### Via Cloudflare Dashboard:
-1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) > **Compute (Workers & Pages)** > `visiongo-website`.
-2. Go to **Settings** > **Variables and Secrets**.
-3. Under **Secrets**, click **Add** and provide `GITHUB_RELEASE_TOKEN` and `DOWNLOAD_ANALYTICS_SECRET`.
-4. Click **Deploy**.
-
-### GitHub Token Permissions Guide
-Create a **Fine-grained personal access token** at [GitHub Settings > Personal Access Tokens](https://github.com/settings/tokens?type=beta):
-- **Resource Owner**: `simon-shi83` (or your organization)
-- **Repository Access**: Only select the required private repositories:
-  - `VisionStudio`
-  - `VisionRuntime`
-  - `VisionEdge`
-- **Permissions**:
-  - **Contents**: `Read-only` (allows reading releases and downloading release asset binaries)
-  - **Metadata**: `Read-only` (mandatory for repository resolution)
 
 ---
 
-## 5. Server-Side Edge API Architecture
+## 5. Cloudflare D1 Database & Migrations (Phase 3)
+
+Cloudflare D1 provides lightweight, serverless SQL storage for user accounts and personal download history.
+
+### 1. Database Creation
+```bash
+npx wrangler d1 create visiongo_db
+```
+The command outputs your `database_id`. Add it to `wrangler.jsonc`:
+```jsonc
+"d1_databases": [
+  {
+    "binding": "DB",
+    "database_name": "visiongo_db",
+    "database_id": "<YOUR_D1_DATABASE_UUID>"
+  }
+]
+```
+
+### 2. Apply Migrations
+The version-controlled migration file is located at [`migrations/0001_create_users_and_downloads.sql`](migrations/0001_create_users_and_downloads.sql).
+
+```bash
+# Apply migrations locally for testing:
+npx wrangler d1 execute visiongo_db --local --file=migrations/0001_create_users_and_downloads.sql
+
+# Apply migrations to production Cloudflare D1:
+npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql
+```
+
+### 3. Database Schema
+- **`users`**:
+  - `id` (TEXT PRIMARY KEY, internal UUID like `vg_usr_xxxxx`)
+  - `google_sub` (TEXT UNIQUE NOT NULL, stable Google subject identifier)
+  - `email` (TEXT NOT NULL)
+  - `display_name` (TEXT)
+  - `avatar_url` (TEXT)
+  - `created_at` (TEXT)
+  - `last_login_at` (TEXT)
+- **`user_download_history`**:
+  - `id` (TEXT PRIMARY KEY)
+  - `user_id` (TEXT NOT NULL, foreign key to `users.id`)
+  - `product` (TEXT NOT NULL)
+  - `version` (TEXT NOT NULL)
+  - `asset_name` (TEXT NOT NULL)
+  - `downloaded_at` (TEXT NOT NULL)
+
+---
+
+## 6. Server-Side Edge API Architecture
 
 ### 1. `GET /api/releases`
-Returns normalized release information for all three downloadable products.
-- **Query Params**: `includePrereleases=true|false` (default: `false`)
-- **Cache**: Cached in Cloudflare Worker memory for 10 minutes (`s-maxage=600`).
-- **Response Format**:
-```json
-{
-  "success": true,
-  "releases": {
-    "visionstudio": [
-      {
-        "product": "visionstudio",
-        "version": "v1.0.0",
-        "name": "VisionStudio 1.0.0 — General Availability",
-        "publishedAt": "2026-09-28T08:00:00Z",
-        "description": "Markdown release notes...",
-        "prerelease": false,
-        "assets": [
-          {
-            "id": "101",
-            "name": "VisionStudio-Setup-1.0.0-x64.exe",
-            "size": 142606336,
-            "contentType": "application/vnd.microsoft.portable-executable",
-            "platform": "windows",
-            "arch": "x64",
-            "downloadUrl": "/api/download/visionstudio/101"
-          }
-        ]
-      }
-    ],
-    "visionruntime": [...],
-    "visionedge": [...]
-  },
-  "updatedAt": "2026-10-01T06:00:00Z"
-}
-```
+Returns normalized release information for all three downloadable products (`visionstudio`, `visionruntime`, `visionedge`).
+- Cached in Worker memory for 10 minutes (`s-maxage=600`).
+- Supports `?includePrereleases=true`.
 
 ### 2. `GET /api/download/:product/:assetId`
 Secure proxy streaming binary release assets from private repositories to clients.
-- **Validation**:
-  - `product` must be one of `visionstudio`, `visionruntime`, `visionedge`.
-  - `assetId` must be strictly numeric.
-- **Headers**:
-  - `Content-Disposition: attachment; filename="..."`
-  - `Content-Type`: binary MIME type
-  - `Cache-Control: private, no-cache, no-store, must-revalidate`
-- **Privacy Analytics**: Dispatches a non-blocking download event to Cloudflare Workers Analytics Engine.
+- Whitelists only certified VISIONGO products.
+- Checks for authenticated `vg_session` cookie; if present, logs download in D1 `user_download_history`.
+- Streams asset with sanitized `Content-Disposition: attachment; filename="..."` headers.
+- Dispatches privacy-preserving event to Workers Analytics Engine.
 
-### 3. `POST /api/contact`
-Enterprise pilot and architecture consultation submission handler.
-- **Fields**: `name`, `email`, `company`, `country`, `productInterest`, `projectScope`.
-- **Bot Mitigation**: Includes an invisible honeypot field (`websiteUrl`). If filled, requests are dropped silently.
-- **Response**: `{ "success": true, "referenceId": "VG-XXXXXX" }`.
+### 3. `POST /api/auth/google`
+Authenticates a user via official Google Identity Services credential.
+- Server-side verification with Google's tokeninfo API.
+- Upserts user record in Cloudflare D1.
+- Sets signed `vg_session` cookie: `HttpOnly; Secure; SameSite=Lax; Max-Age=30 days`.
 
-### 4. `GET /api/health`
-Health check endpoint reporting edge node data center (`request.cf.colo`) and platform status.
+### 4. `GET /api/auth/me`
+Returns current authenticated user profile (`{ user: { id, email, displayName, avatarUrl, createdAt } }`) or `{ user: null }`.
+
+### 5. `POST /api/auth/logout`
+Terminates the session by clearing `vg_session` cookie.
+
+### 6. `GET /api/user/downloads`
+Returns the authenticated user's software download history from D1.
+
+### 7. `POST /api/contact`
+Enterprise pilot and architecture consultation submission handler with bot honeypot protection.
+
+### 8. `GET /api/health`
+Edge status, CF data center code, and D1/Analytics readiness probe.
 
 ---
 
-## 6. Privacy-Conscious Download Analytics
+## 7. Privacy-Conscious Download Analytics (Workers Analytics Engine)
 
-Download events are recorded using **Cloudflare Workers Analytics Engine**, offering serverless analytics without cookies, tracking scripts, or invasive browser fingerprinting.
-
-### Privacy Guarantees
-- **No Raw IP Storage**: Visitor IP addresses are NEVER stored in Analytics Engine or exposed in APIs.
-- **Pseudonymous Deduplication**: An HMAC-SHA256 hash is computed using `DOWNLOAD_ANALYTICS_SECRET` and the client IP. This allows aggregate counting of unique downloading networks without identifying users.
-- **Geolocation**: Derived purely from Cloudflare edge routing headers (`request.cf.country`, `request.cf.region`).
-- **Non-Blocking**: Analytics recording is wrapped in `ctx.waitUntil(...)`. An analytics failure will **never** cause a download to fail or stall.
-
-### Wrangler Binding (`wrangler.jsonc`)
+### Enabling Analytics Engine:
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) > **Compute (Workers & Pages)** > **Analytics Engine**.
+2. Click **Enable Analytics Engine**.
+3. In `wrangler.jsonc`, uncomment the `analytics_engine_datasets` block:
 ```jsonc
 "analytics_engine_datasets": [
   {
@@ -201,109 +216,67 @@ Download events are recorded using **Cloudflare Workers Analytics Engine**, offe
 ]
 ```
 
-### Dataset Schema
-- **`blob1`**: `product` (`visionstudio` | `visionruntime` | `visionedge`)
-- **`blob2`**: `version` (e.g. `v1.0.0`)
-- **`blob3`**: `asset_name` (e.g. `visionruntime-1.0.0-linux-x86_64.tar.gz`)
-- **`blob4`**: `platform` (`windows` | `linux` | `macos` | `generic`)
-- **`blob5`**: `arch` (`x64` | `arm64` | `universal`)
-- **`blob6`**: `country` (ISO country code, e.g. `US`, `DE`, `CN`)
-- **`blob7`**: `region` (e.g. `Bavaria`, `California`)
-- **`blob8`**: `status` (`success` | `failed` | `not_found`)
-- **`blob9`**: `pseudo_client_id` (HMAC hex string)
-- **`blob10`**: `city` (optional)
-- **`double1`**: `asset_size_bytes`
-- **`double2`**: `http_status_code`
-- **`index1`**: `product` (indexed for high-speed queries)
+### Example SQL Queries for Analytics Engine
 
----
-
-## 7. Example SQL Queries for Analytics Engine
-
-Analytics Engine datasets can be queried using the Cloudflare SQL API:
-
-```bash
-curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
-     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-     -H "Content-Type: text/plain" \
-     -d "$QUERY"
-```
-
-### 1. Total downloads by product
 ```sql
+-- 1. Total downloads by product
 SELECT blob1 AS product, COUNT() AS total_downloads
 FROM visiongo_downloads
 WHERE blob8 = 'success'
 GROUP BY product
 ORDER BY total_downloads DESC;
-```
 
-### 2. Downloads by country
-```sql
+-- 2. Downloads by country
 SELECT blob6 AS country, COUNT() AS total_downloads
 FROM visiongo_downloads
 WHERE blob8 = 'success'
 GROUP BY country
 ORDER BY total_downloads DESC
-LIMIT 20;
-```
+LIMIT 10;
 
-### 3. Downloads by region
-```sql
+-- 3. Downloads by region
 SELECT blob6 AS country, blob7 AS region, COUNT() AS total_downloads
 FROM visiongo_downloads
 WHERE blob8 = 'success'
 GROUP BY country, region
-ORDER BY total_downloads DESC
-LIMIT 25;
-```
-
-### 4. Downloads by product and country
-```sql
-SELECT blob1 AS product, blob6 AS country, COUNT() AS total_downloads
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY product, country
 ORDER BY total_downloads DESC;
-```
 
-### 5. Downloads by version
-```sql
-SELECT blob1 AS product, blob2 AS version, COUNT() AS total_downloads
+-- 4. VisionStudio downloads by country
+SELECT blob6 AS country, COUNT() AS downloads
 FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY product, version
-ORDER BY total_downloads DESC;
-```
+WHERE blob1 = 'visionstudio' AND blob8 = 'success'
+GROUP BY country
+ORDER BY downloads DESC;
 
-### 6. Downloads by platform & architecture
-```sql
+-- 5. VisionRuntime downloads by country
+SELECT blob6 AS country, COUNT() AS downloads
+FROM visiongo_downloads
+WHERE blob1 = 'visionruntime' AND blob8 = 'success'
+GROUP BY country
+ORDER BY downloads DESC;
+
+-- 6. VisionEdge downloads by country
+SELECT blob6 AS country, COUNT() AS downloads
+FROM visiongo_downloads
+WHERE blob1 = 'visionedge' AND blob8 = 'success'
+GROUP BY country
+ORDER BY downloads DESC;
+
+-- 7. Downloads by platform & architecture
 SELECT blob4 AS platform, blob5 AS arch, COUNT() AS total_downloads
 FROM visiongo_downloads
 WHERE blob8 = 'success'
 GROUP BY platform, arch
 ORDER BY total_downloads DESC;
-```
 
-### 7. Downloads during the last 7 days
-```sql
-SELECT blob1 AS product, COUNT() AS downloads_7d
-FROM visiongo_downloads
-WHERE timestamp >= NOW() - INTERVAL '7' DAY AND blob8 = 'success'
-GROUP BY product;
-```
-
-### 8. Downloads during the last 30 days
-```sql
+-- 8. Downloads during last 30 days
 SELECT toStartOfDay(timestamp) AS day, blob1 AS product, COUNT() AS daily_downloads
 FROM visiongo_downloads
 WHERE timestamp >= NOW() - INTERVAL '30' DAY AND blob8 = 'success'
 GROUP BY day, product
 ORDER BY day ASC;
-```
 
-### 9. Approximate unique anonymous download sources
-```sql
+-- 9. Approximate unique anonymous download sources
 SELECT blob1 AS product, COUNT(DISTINCT blob9) AS approximate_unique_clients
 FROM visiongo_downloads
 WHERE blob8 = 'success'
@@ -312,96 +285,72 @@ GROUP BY product;
 
 ---
 
-## 8. Future Cloudflare R2 Migration Architecture
+## 8. Google Search Console & SEO Configuration
 
-In Phase 3, release binaries can optionally transition from GitHub Release storage to **Cloudflare R2** object storage for zero-egress fee distribution:
+All 12 public routes have dedicated prerendered HTML snapshots in `dist/` with full OpenGraph, Twitter, canonical, and JSON-LD structured data.
 
-```
-[GitHub Actions CI/CD]
-        |
-        | 1. Build release binaries (Linux/Windows)
-        | 2. Create GitHub Release tag
-        v
-[Upload to Cloudflare R2 Bucket: `visiongo-releases`]
-        |
-        v
-[Cloudflare Worker: R2DownloadProvider]
-        |
-        | (env.RELEASES_BUCKET.get(key))
-        v
-[Direct download via downloads.visiongo.app or visiongo.app/download/...]
-```
-
-The codebase is already decoupled using the `ReleaseProvider` and `DownloadProvider` interfaces in `worker/types.ts`. Switching to R2 requires implementing `R2DownloadProvider` in the Worker without modifying any frontend UI components.
+### Step-by-Step Search Console Verification:
+1. Open [Google Search Console](https://search.google.com/search-console).
+2. Choose **Domain** property and enter `visiongo.app`.
+3. Copy the TXT verification record: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`.
+4. In [Cloudflare Dashboard](https://dash.cloudflare.com/) > **DNS** > **Records** for `visiongo.app`:
+   - Type: `TXT`
+   - Name: `@`
+   - Content: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`
+   - TTL: `Auto`
+5. Click **Verify** in Google Search Console.
+6. Under **Sitemaps**, submit: `https://visiongo.app/sitemap.xml`.
+7. Request indexing for major landing pages (`/`, `/downloads`, `/products/visionstudio`, `/products/visionruntime`, `/products/visionedge`, `/contact`).
 
 ---
 
-## 9. Google Search Console Setup & SEO Verification
+## 9. Manual Setup Checklist for Repository Owner
 
-To verify `visiongo.app` in Google Search Console:
+The following actions must be executed manually by the project maintainer:
 
-1. **Open Google Search Console**: Go to [https://search.google.com/search-console](https://search.google.com/search-console).
-2. **Add Property**: Select **Domain property** and enter `visiongo.app`.
-3. **DNS Verification**:
-   - Google will provide a TXT verification record: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`.
-   - Log in to **Cloudflare Dashboard** > **DNS** > **Records** for `visiongo.app`.
-   - Add a new **TXT** record:
-     - **Name**: `@`
-     - **Content**: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`
-     - **TTL**: Auto
-4. **Click Verify**: Return to Google Search Console and click **Verify**.
-5. **Submit Sitemap**:
-   - Navigate to **Index** > **Sitemaps**.
-   - Enter `https://visiongo.app/sitemap.xml` and click **Submit**.
-   - Check that all 10 canonical routes (`/`, `/products/*`, `/solutions`, `/developers`, `/downloads`, `/contact`, `/resources`, `/about`) are indexed.
-
----
-
-## 10. Privacy-Friendly Cloudflare Web Analytics
-
-To track global website visitors without adding third-party tracking cookies or marketing pixels:
-
-1. In [Cloudflare Dashboard](https://dash.cloudflare.com/), navigate to **Analytics & Logs** > **Web Analytics**.
-2. Click **Add a site** and select `visiongo.app`.
-3. Choose **Automatic setup via Cloudflare proxy** (zero client-side code required).
-4. Cloudflare will automatically compute page views, top referrers, performance vitals, and geographical distribution directly at the edge DNS/proxy layer.
+- [ ] **Cloudflare D1 Database**:
+  - Run `npx wrangler d1 create visiongo_db`
+  - Paste the generated `database_id` into `wrangler.jsonc`
+  - Run `npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql`
+- [ ] **Cloudflare Analytics Engine**:
+  - Visit `https://dash.cloudflare.com/<ACCOUNT_ID>/workers/analytics-engine` and click **Enable Analytics Engine**
+  - Uncomment the `analytics_engine_datasets` block in `wrangler.jsonc`
+- [ ] **Cloudflare Worker Secrets**:
+  - Run `npx wrangler secret put GITHUB_RELEASE_TOKEN` (Fine-grained PAT with read access to private repos)
+  - Run `npx wrangler secret put DOWNLOAD_ANALYTICS_SECRET` (HMAC salt for anonymous download deduplication)
+  - Run `npx wrangler secret put SESSION_SECRET` (Cryptographic key for signing session cookies)
+  - Run `npx wrangler secret put GOOGLE_CLIENT_ID` (Web Client ID from Google Cloud Console)
+- [ ] **Google Cloud Console (OAuth & Sign-In)**:
+  - Create OAuth 2.0 Web Application client
+  - Add Authorized JavaScript Origins: `https://visiongo.app`, `https://www.visiongo.app`, `http://localhost:3000`
+- [ ] **Google Search Console**:
+  - Add DNS TXT record in Cloudflare for domain verification
+  - Submit `https://visiongo.app/sitemap.xml`
 
 ---
 
-## 11. Local Development & Testing
+## 10. Local Development & Testing
 
 ```bash
 # Install dependencies
 pnpm install
 
-# Typecheck TypeScript
+# TypeScript typecheck
 pnpm run typecheck
 
-# Build bundle and prerender static routes
+# Production build and prerender static routes
 pnpm run build
 
 # Start local Vite development server
 pnpm run dev
 
-# Preview full Cloudflare Worker environment locally
+# Preview Cloudflare Worker environment locally
 npx wrangler dev
 ```
 
 ---
 
-## 12. Security & Compliance Checklist
-
-- [x] **No Token in Bundles**: Verified using static AST analysis and grep that `GITHUB_RELEASE_TOKEN` never appears in `dist/assets/*.js`.
-- [x] **Safe Markdown Rendering**: `SafeMarkdown` AST parser ensures no raw HTML injection or XSS from GitHub descriptions.
-- [x] **Strict Endpoint Validation**: `/api/download/:product/:assetId` strictly whitelists products and validates numeric IDs.
-- [x] **Honeypot Spam Protection**: `/api/contact` includes hidden bot traps.
-- [x] **Disallow Crawler Indexing of APIs**: `public/robots.txt` explicitly disallows `/api/` and internal download paths.
-- [x] **Strict Headers**: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
-- [x] **Pseudonymous Analytics**: Workers Analytics Engine stores keyed HMAC hashes instead of IP addresses.
-
----
-
-## 13. Contacts & Channels
+## 11. Contacts & Channels
 
 - **Target Domain**: [https://visiongo.app](https://visiongo.app)
 - **General Inquiries**: [contact@visiongo.app](mailto:contact@visiongo.app)

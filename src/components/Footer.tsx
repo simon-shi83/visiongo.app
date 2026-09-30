@@ -253,8 +253,22 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
 
         {/* Bottom Bar */}
         <div className="border-t border-zinc-900 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-zinc-400">
-          <div>
-            &copy; {new Date().getFullYear()} {t.footer.copyright}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>&copy; {new Date().getFullYear()} {t.footer.copyright}</span>
+            <span className="text-zinc-700 hidden sm:inline">•</span>
+            <button
+              onClick={() => onNavigate('/privacy')}
+              className="hover:text-zinc-200 transition-colors cursor-pointer"
+            >
+              {locale === 'zh' ? '隐私政策' : 'Privacy Policy'}
+            </button>
+            <span className="text-zinc-700 hidden sm:inline">•</span>
+            <button
+              onClick={() => onNavigate('/terms')}
+              className="hover:text-zinc-200 transition-colors cursor-pointer"
+            >
+              {locale === 'zh' ? '使用条款' : 'Terms of Use'}
+            </button>
           </div>
           <div className="flex items-center gap-4">
             <LanguageSwitcher variant="full" />

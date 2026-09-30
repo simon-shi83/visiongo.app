@@ -66,10 +66,30 @@ export interface AnalyticsEngineDataset {
   writeDataPoint(point: AnalyticsDataPoint): void;
 }
 
+export interface User {
+  id: string;
+  googleSub: string;
+  email: string;
+  displayName?: string;
+  avatarUrl?: string;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+export interface UserDownloadRecord {
+  id: string;
+  userId: string;
+  product: SupportedProduct;
+  version: string;
+  assetName: string;
+  downloadedAt: string;
+}
+
 export interface Env {
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
+  DB?: D1Database;
   DOWNLOADS_ANALYTICS?: AnalyticsEngineDataset;
   DOWNLOAD_ANALYTICS_SECRET?: string;
   GITHUB_RELEASE_TOKEN?: string;
@@ -79,4 +99,7 @@ export interface Env {
   VISIONEDGE_REPO?: string;
   CONTACT_EMAIL_KEY?: string;
   DOWNLOADS_CACHE_TTL_SEC?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  SESSION_SECRET?: string;
 }
