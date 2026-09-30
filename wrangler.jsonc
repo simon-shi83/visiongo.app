@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "visiongo-website",
+  "main": "worker/index.ts",
+  "compatibility_date": "2024-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "html_handling": "auto-trailing-slash"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "visiongo.app/*",
+      "zone_name": "visiongo.app",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.visiongo.app/*",
+      "zone_name": "visiongo.app",
+      "custom_domain": true
+    }
+  ]
+}

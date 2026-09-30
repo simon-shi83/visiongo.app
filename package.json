@@ -1,0 +1,40 @@
+{
+  "name": "visiongo-website",
+  "version": "1.0.0",
+  "description": "Official website for VISIONGO - Industrial Vision Intelligence (visiongo.app)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && node scripts/generate-routes.js",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [
+    "industrial-vision",
+    "machine-vision",
+    "visionstudio",
+    "visionruntime",
+    "visionedge",
+    "visioncloud"
+  ],
+  "author": "VISIONGO Engineering",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260929.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "wrangler": "^4.143.0"
+  }
+}
