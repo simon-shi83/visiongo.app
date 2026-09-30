@@ -10,6 +10,16 @@
     "not_found_handling": "single-page-application",
     "html_handling": "auto-trailing-slash"
   },
+  // To enable Cloudflare Workers Analytics Engine:
+  // 1. Visit: https://dash.cloudflare.com/9a750ae5472b30301cd3aa878c5da2a9/workers/analytics-engine
+  // 2. Click "Enable Analytics Engine" (Free tier available)
+  // 3. Uncomment the block below:
+  // "analytics_engine_datasets": [
+  //   {
+  //     "binding": "DOWNLOADS_ANALYTICS",
+  //     "dataset": "visiongo_downloads"
+  //   }
+  // ],
   "observability": {
     "enabled": true
   },

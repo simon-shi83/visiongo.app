@@ -162,18 +162,21 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
               </li>
               <li>
                 <button
-                  onClick={() => onNavigate('/developers#api')}
-                  className="text-zinc-400 hover:text-white transition-colors"
+                  onClick={() => onNavigate('/downloads')}
+                  className="text-emerald-400 hover:text-emerald-300 font-medium transition-colors flex items-center gap-1.5"
                 >
-                  {locale === 'zh' ? '现场总线与 API 参考' : 'Fieldbus & API Reference'}
+                  <span>{t.nav.downloads}</span>
+                  <span className="text-[10px] font-mono px-1 rounded bg-emerald-500/10 border border-emerald-500/20">
+                    GA
+                  </span>
                 </button>
               </li>
               <li>
                 <button
-                  onClick={() => onNavigate('/developers#examples')}
+                  onClick={() => onNavigate('/developers#api')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  {locale === 'zh' ? '检测配方与模板' : 'Inspection Recipes'}
+                  {locale === 'zh' ? '现场总线与 API 参考' : 'Fieldbus & API Reference'}
                 </button>
               </li>
               <li>
@@ -222,18 +225,18 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
               </li>
               <li>
                 <button
-                  onClick={() => onNavigate('/resources#releases')}
-                  className="text-zinc-400 hover:text-white transition-colors"
-                >
-                  {locale === 'zh' ? '发版日志' : 'Release Notes'}
-                </button>
-              </li>
-              <li>
-                <button
                   onClick={() => onNavigate('/about')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
                   {t.nav.about} VISIONGO
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => onNavigate('/contact')}
+                  className="text-zinc-400 hover:text-white transition-colors"
+                >
+                  {t.nav.contact}
                 </button>
               </li>
               <li className="pt-2">

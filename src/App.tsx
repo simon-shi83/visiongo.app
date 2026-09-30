@@ -8,6 +8,9 @@ import { SolutionsPage } from './pages/SolutionsPage';
 import { DevelopersPage } from './pages/DevelopersPage';
 import { ResourcesPage } from './pages/ResourcesPage';
 import { AboutPage } from './pages/AboutPage';
+import { DownloadsPage } from './pages/DownloadsPage';
+import { ContactPage } from './pages/ContactPage';
+import { DownloadableProduct } from './types/downloads';
 import { LanguageProvider } from './i18n/LanguageContext';
 
 const AppContent: React.FC = () => {
@@ -59,7 +62,26 @@ const AppContent: React.FC = () => {
       );
     }
 
+    // Check downloads route with optional /downloads/:product/:version
+    if (currentPath === '/downloads' || currentPath.startsWith('/downloads/')) {
+      const parts = currentPath.split('/').filter(Boolean);
+      // parts[0] = 'downloads', parts[1] = product, parts[2] = version
+      const product = parts[1] as DownloadableProduct | undefined;
+      const version = parts[2];
+
+      return (
+        <DownloadsPage
+          initialProduct={product}
+          initialVersion={version}
+          onNavigate={navigate}
+          onOpenContact={() => setIsContactOpen(true)}
+        />
+      );
+    }
+
     switch (currentPath) {
+      case '/contact':
+        return <ContactPage />;
       case '/solutions':
         return (
           <SolutionsPage
@@ -68,7 +90,7 @@ const AppContent: React.FC = () => {
           />
         );
       case '/developers':
-        return <DevelopersPage />;
+        return <DevelopersPage onNavigate={navigate} />;
       case '/resources':
         return <ResourcesPage />;
       case '/about':

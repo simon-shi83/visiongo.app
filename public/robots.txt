@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
+Disallow: /api/
+Disallow: /api/*
 
 Sitemap: https://visiongo.app/sitemap.xml

@@ -36,6 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
   const navLinks = [
     { label: t.nav.solutions, path: '/solutions' },
     { label: t.nav.developers, path: '/developers' },
+    { label: t.nav.downloads, path: '/downloads' },
     { label: t.nav.resources, path: '/resources' },
     { label: t.nav.about, path: '/about' },
   ];

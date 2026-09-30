@@ -45,6 +45,16 @@ const routes = [
     description: 'Articles, tutorials, case studies, and release notes on building deterministic, air-gapped industrial vision systems.',
   },
   {
+    path: 'downloads',
+    title: 'Download Software | VISIONGO — Industrial Vision Intelligence',
+    description: 'Download official releases for VisionStudio, VisionRuntime, and VisionEdge. 100% air-gapped readiness, sub-millisecond real-time execution.',
+  },
+  {
+    path: 'contact',
+    title: 'Contact Engineering & Request Demo | VISIONGO',
+    description: 'Get in touch with VISIONGO systems architects for enterprise deployments, PoC pilot evaluations, or an architecture walkthrough.',
+  },
+  {
     path: 'about',
     title: 'About VISIONGO — Industrial Vision Intelligence',
     description: 'Product-first software company engineering the next generation of industrial vision systems with AI.',

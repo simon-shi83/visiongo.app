@@ -18,8 +18,10 @@ export interface TranslationDictionary {
     productsDropdownTitle: string;
     solutions: string;
     developers: string;
+    downloads: string;
     resources: string;
     about: string;
+    contact: string;
     contactEngineering: string;
     switchLanguage: string;
   };
