@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight, Check } from 'lucide-react';
 import { Product } from '../types';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface ProductCardProps {
   product: Product;
@@ -8,6 +9,8 @@ interface ProductCardProps {
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) => {
+  const { t } = useLanguage();
+
   return (
     <div
       onClick={() => onSelect(product.slug)}
@@ -69,13 +72,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
       {/* Footer CTA */}
       <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between text-xs font-mono font-medium">
         <span className="text-zinc-400 group-hover:text-white transition-colors">
-          Explore specifications
+          {t.productsSection.exploreSpecs}
         </span>
         <span
-          className="inline-flex items-center gap-1 transition-transform group-hover:translate-x-1"
+          className="inline-flex items-center gap-1 transition-transform group-hover:translate-x-1 font-semibold"
           style={{ color: product.accentColor }}
         >
-          Learn more
+          {t.productsSection.learnMore}
           <ArrowRight className="w-3.5 h-3.5" />
         </span>
       </div>

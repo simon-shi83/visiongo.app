@@ -1,8 +1,9 @@
 import React from 'react';
 import { ArrowRight, CheckCircle2, Layers } from 'lucide-react';
-import { SOLUTIONS } from '../data/solutions';
+import { getSolutions } from '../data/solutions';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface SolutionsPageProps {
   onNavigate: (path: string) => void;
@@ -10,23 +11,38 @@ interface SolutionsPageProps {
 }
 
 export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpenContact }) => {
+  const { t, locale } = useLanguage();
+  const solutions = getSolutions(locale);
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-28 pb-24">
       <SeoHead
-        title="Industrial Vision Solutions"
-        description="Engineered solutions for surface defect detection, OCR reading, PCB inspection, and industrial AI assistance."
+        title={t.nav.solutions}
+        description={
+          locale === 'zh'
+            ? '面向高精密离散制造的高性能工业视觉检测、字符验证与自适应控制解决方案。'
+            : 'Engineered solutions for surface defect detection, OCR reading, PCB inspection, and industrial AI assistance.'
+        }
         canonicalPath="/solutions"
       />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
-          badge="Solutions Portfolio"
-          title="Turnkey Industrial Vision Implementations"
-          description="Addressing challenging discrete manufacturing defect detection, barcode/OCR readability, and autonomous parameter tuning."
+          badge={t.solutionsSection.badge}
+          title={
+            locale === 'zh'
+              ? '开箱即用的工业机器视觉解决方案'
+              : 'Turnkey Industrial Vision Implementations'
+          }
+          description={
+            locale === 'zh'
+              ? '攻克离散制造业微缺陷识别、严苛曲面 DPM 字符识读与设备参数自愈补偿难题。'
+              : 'Addressing challenging discrete manufacturing defect detection, barcode/OCR readability, and autonomous parameter tuning.'
+          }
         />
 
         <div className="space-y-12">
-          {SOLUTIONS.map((sol, index) => (
+          {solutions.map((sol, index) => (
             <div
               key={sol.id}
               className="p-8 sm:p-10 rounded-3xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-colors"
@@ -49,7 +65,7 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
 
                   <div className="pt-2">
                     <div className="text-xs font-mono text-zinc-400 uppercase tracking-wider mb-3">
-                      Recommended Software Stack
+                      {t.solutionsSection.recommendedStack}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {sol.recommendedStack.map((item, idx) => (
@@ -68,7 +84,7 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
 
                 <div className="lg:col-span-5 bg-zinc-950/70 border border-zinc-800 rounded-2xl p-6 space-y-4">
                   <div className="text-xs font-mono uppercase tracking-wider text-zinc-400 font-semibold border-b border-zinc-800/80 pb-3">
-                    Key Performance Metrics
+                    {t.solutionsSection.performanceMetrics}
                   </div>
 
                   <ul className="space-y-3">
@@ -85,7 +101,9 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
                       onClick={onOpenContact}
                       className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-mono font-bold transition-colors flex items-center justify-center gap-2"
                     >
-                      <span>Inquire About {sol.title}</span>
+                      <span>
+                        {t.solutionsSection.inquireAbout} {sol.title}
+                      </span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>

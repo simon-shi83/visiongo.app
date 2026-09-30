@@ -8,8 +8,9 @@ import { SolutionsPage } from './pages/SolutionsPage';
 import { DevelopersPage } from './pages/DevelopersPage';
 import { ResourcesPage } from './pages/ResourcesPage';
 import { AboutPage } from './pages/AboutPage';
+import { LanguageProvider } from './i18n/LanguageContext';
 
-export const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(window.location.pathname || '/');
   const [isContactOpen, setIsContactOpen] = useState<boolean>(false);
 
@@ -103,6 +104,14 @@ export const App: React.FC = () => {
         onClose={() => setIsContactOpen(false)}
       />
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
   );
 };
 

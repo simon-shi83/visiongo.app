@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Send, Mail, CheckCircle, AlertCircle, Building, User } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface ContactModalProps {
   isOpen: boolean;
@@ -7,6 +8,8 @@ interface ContactModalProps {
 }
 
 export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
+  const { t, locale } = useLanguage();
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -28,18 +31,22 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
       const response = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, locale }),
       });
 
       if (response.ok) {
         setStatus('success');
       } else {
         const data = await response.json();
-        setErrorMessage(data.error || 'Submission failed. Please email contact@visiongo.app directly.');
+        setErrorMessage(
+          data.error ||
+            (locale === 'zh'
+              ? '提交失败，请直接发送邮件至 contact@visiongo.app。'
+              : 'Submission failed. Please email contact@visiongo.app directly.')
+        );
         setStatus('error');
       }
     } catch {
-      // In offline or local dev without worker, provide graceful success fallback
       setStatus('success');
     }
   };
@@ -50,10 +57,8 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">
           <div>
-            <h3 className="text-lg font-bold text-white">Contact VISIONGO Engineering</h3>
-            <p className="text-xs text-zinc-400 font-mono">
-              Enterprise deployment, pilots, and architecture inquiries
-            </p>
+            <h3 className="text-lg font-bold text-white">{t.contactModal.title}</h3>
+            <p className="text-xs text-zinc-400 font-mono">{t.contactModal.subtitle}</p>
           </div>
           <button
             onClick={onClose}
@@ -70,13 +75,12 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
                 <CheckCircle className="w-6 h-6" />
               </div>
-              <h4 className="text-xl font-bold text-white">Message Transmitted</h4>
+              <h4 className="text-xl font-bold text-white">{t.contactModal.successTitle}</h4>
               <p className="text-sm text-zinc-400 max-w-sm mx-auto">
-                Thank you for your interest. A VISIONGO systems architect will review your technical
-                requirements and follow up within 24 hours.
+                {t.contactModal.successMessage}
               </p>
               <div className="pt-2 text-xs font-mono text-zinc-400">
-                You can also email directly to{' '}
+                {locale === 'zh' ? '或随时直接发送邮件至 ' : 'You can also email directly to '}
                 <a href="mailto:contact@visiongo.app" className="text-emerald-400 hover:underline">
                   contact@visiongo.app
                 </a>
@@ -85,7 +89,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                 onClick={onClose}
                 className="mt-4 px-6 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-mono"
               >
-                Close Window
+                {t.contactModal.closeWindow}
               </button>
             </div>
           ) : (
@@ -100,7 +104,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono text-zinc-400 mb-1">
-                    Your Name *
+                    {t.contactModal.nameLabel}
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -109,7 +113,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="Jane Doe"
+                      placeholder={t.contactModal.namePlaceholder}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -117,7 +121,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
 
                 <div>
                   <label className="block text-xs font-mono text-zinc-400 mb-1">
-                    Work Email *
+                    {t.contactModal.emailLabel}
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -126,7 +130,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="jane@company.com"
+                      placeholder={t.contactModal.emailPlaceholder}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -136,7 +140,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono text-zinc-400 mb-1">
-                    Company / Organization
+                    {t.contactModal.companyLabel}
                   </label>
                   <div className="relative">
                     <Building className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -144,7 +148,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                       type="text"
                       value={formData.company}
                       onChange={(e) => setFormData({ ...formData, company: e.target.value })}
-                      placeholder="Precision Optics Ltd."
+                      placeholder={t.contactModal.companyPlaceholder}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -152,33 +156,35 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
 
                 <div>
                   <label className="block text-xs font-mono text-zinc-400 mb-1">
-                    Area of Interest
+                    {t.contactModal.productLabel}
                   </label>
                   <select
                     value={formData.product}
                     onChange={(e) => setFormData({ ...formData, product: e.target.value })}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="all">Full VISIONGO Platform</option>
-                    <option value="visionstudio">VisionStudio (Workspace)</option>
-                    <option value="visionruntime">VisionRuntime (Production Engine)</option>
-                    <option value="visionedge">VisionEdge (On-site AI)</option>
-                    <option value="visioncloud">VisionCloud (Cloud Intelligence)</option>
-                    <option value="custom">System Integration / Pilot</option>
+                    <option value="all">{t.contactModal.allProductsOption}</option>
+                    <option value="visionstudio">VisionStudio</option>
+                    <option value="visionruntime">VisionRuntime</option>
+                    <option value="visionedge">VisionEdge</option>
+                    <option value="visioncloud">VisionCloud</option>
+                    <option value="custom">
+                      {locale === 'zh' ? '系统集成 / 产线定制' : 'System Integration / Pilot'}
+                    </option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
-                  Project Scope & Technical Details *
+                  {t.contactModal.messageLabel}
                 </label>
                 <textarea
                   required
                   rows={4}
                   value={formData.message}
                   onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                  placeholder="Tell us about your inspection speed, camera resolution, line throughput, or specific challenges..."
+                  placeholder={t.contactModal.messagePlaceholder}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -193,7 +199,9 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                   disabled={status === 'submitting'}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs font-mono transition-all disabled:opacity-50"
                 >
-                  {status === 'submitting' ? 'Transmitting...' : 'Send Inquiry'}
+                  {status === 'submitting'
+                    ? t.contactModal.submittingButton
+                    : t.contactModal.submitButton}
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>

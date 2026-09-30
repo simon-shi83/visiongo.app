@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, Menu, X, ArrowRight } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
-import { PRODUCT_LIST } from '../data/products';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { getProducts } from '../data/products';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface NavbarProps {
   currentPath: string;
@@ -10,6 +12,9 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenContact }) => {
+  const { t, locale } = useLanguage();
+  const products = getProducts(locale);
+
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [productsDropdownOpen, setProductsDropdownOpen] = useState(false);
@@ -29,10 +34,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
   }, [currentPath]);
 
   const navLinks = [
-    { label: 'Solutions', path: '/solutions' },
-    { label: 'Developers', path: '/developers' },
-    { label: 'Resources', path: '/resources' },
-    { label: 'About', path: '/about' },
+    { label: t.nav.solutions, path: '/solutions' },
+    { label: t.nav.developers, path: '/developers' },
+    { label: t.nav.resources, path: '/resources' },
+    { label: t.nav.about, path: '/about' },
   ];
 
   return (
@@ -66,7 +71,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
               VISIONGO
             </span>
             <span className="hidden sm:block text-[10px] uppercase font-mono tracking-widest text-zinc-400">
-              Industrial Vision Intelligence
+              {t.hero.badge}
             </span>
           </div>
         </button>
@@ -87,7 +92,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-900/50'
               }`}
             >
-              Products
+              {t.nav.products}
               <ChevronDown
                 className={`w-4 h-4 transition-transform duration-200 ${
                   productsDropdownOpen ? 'rotate-180 text-emerald-400' : 'text-zinc-500'
@@ -96,12 +101,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
             </button>
 
             {productsDropdownOpen && (
-              <div className="absolute top-full left-0 w-80 pt-2 z-50">
+              <div className="absolute top-full left-0 w-80 pt-2 z-50 animate-fadeIn">
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-2 shadow-2xl backdrop-blur-xl">
                   <div className="text-[10px] uppercase tracking-wider font-mono text-zinc-400 px-3 py-1.5 border-b border-zinc-800/80 mb-1">
-                    Industrial Vision Suite
+                    {t.nav.productsDropdownTitle}
                   </div>
-                  {PRODUCT_LIST.map((product) => (
+                  {products.map((product) => (
                     <button
                       key={product.id}
                       onClick={() => {
@@ -167,6 +172,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
 
         {/* Right Action Items */}
         <div className="hidden md:flex items-center gap-3">
+          {/* Language Switcher */}
+          <LanguageSwitcher />
+
           <a
             href="https://github.com/simon-shi83/website"
             target="_blank"
@@ -181,13 +189,14 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
             onClick={onOpenContact}
             className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all font-mono"
           >
-            Contact Engineering
+            {t.nav.contactEngineering}
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Mobile Menu Button */}
+        {/* Mobile Menu Button & Language Switcher */}
         <div className="md:hidden flex items-center gap-2">
+          <LanguageSwitcher variant="compact" />
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-900 focus:outline-none"
@@ -202,10 +211,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
       {mobileMenuOpen && (
         <div className="md:hidden bg-zinc-950/95 border-b border-zinc-800 px-4 pt-2 pb-6 space-y-3 backdrop-blur-xl">
           <div className="text-xs font-mono uppercase tracking-wider text-zinc-400 px-2 pt-2">
-            Products
+            {t.nav.products}
           </div>
           <div className="grid grid-cols-1 gap-1">
-            {PRODUCT_LIST.map((product) => (
+            {products.map((product) => (
               <button
                 key={product.id}
                 onClick={() => {
@@ -247,7 +256,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate, onOpenC
               }}
               className="w-full py-2.5 rounded-lg text-xs font-mono font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 transition-colors text-center"
             >
-              Contact Engineering
+              {t.nav.contactEngineering}
             </button>
           </div>
         </div>

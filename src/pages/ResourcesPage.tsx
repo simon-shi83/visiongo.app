@@ -1,25 +1,40 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Clock, Tag, User } from 'lucide-react';
-import { RESOURCE_ARTICLES } from '../data/resources';
+import { getResourceArticles } from '../data/resources';
 import { ResourceArticle } from '../types';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export const ResourcesPage: React.FC = () => {
+  const { t, locale } = useLanguage();
+  const articles = getResourceArticles(locale);
+
   const [selectedFilter, setSelectedFilter] = useState<string>('All');
   const [activeArticle, setActiveArticle] = useState<ResourceArticle | null>(null);
 
-  const categories = ['All', 'Article', 'Tutorial', 'Case Study', 'Release Note'];
+  const categories = [
+    { key: 'All', label: t.resourcesSection.filterAll },
+    { key: 'Article', label: locale === 'zh' ? '深度文章' : 'Article' },
+    { key: 'Tutorial', label: locale === 'zh' ? '开发教程' : 'Tutorial' },
+    { key: 'Case Study', label: locale === 'zh' ? '实战案例' : 'Case Study' },
+    { key: 'Release Note', label: locale === 'zh' ? '发版说明' : 'Release Note' },
+  ];
 
-  const filteredArticles = selectedFilter === 'All'
-    ? RESOURCE_ARTICLES
-    : RESOURCE_ARTICLES.filter((a) => a.type === selectedFilter);
+  const filteredArticles =
+    selectedFilter === 'All'
+      ? articles
+      : articles.filter((a) => a.type === selectedFilter);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-28 pb-24">
       <SeoHead
-        title="Technical Resources & Architecture Notes"
-        description="Explore in-depth technical articles, tutorials, industrial case studies, and software release notes."
+        title={t.nav.resources}
+        description={
+          locale === 'zh'
+            ? '探讨零拷贝内存优化、工厂无网离线机器学习架构以及 24/7 高可用机器视觉系统的工程实现。'
+            : 'Explore in-depth technical articles, tutorials, industrial case studies, and software release notes.'
+        }
         canonicalPath="/resources"
       />
 
@@ -31,7 +46,7 @@ export const ResourcesPage: React.FC = () => {
               onClick={() => setActiveArticle(null)}
               className="mb-8 inline-flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition-colors"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Back to Resources
+              <ArrowLeft className="w-3.5 h-3.5" /> {t.resourcesSection.backToResources}
             </button>
 
             <div className="space-y-4 mb-8">
@@ -62,13 +77,16 @@ export const ResourcesPage: React.FC = () => {
                 activeArticle.contentMarkdown.split('\n\n').map((paragraph, idx) => {
                   if (paragraph.startsWith('## ')) {
                     return (
-                      <h2 key={idx} className="text-2xl font-bold text-white mt-8 mb-4 border-b border-zinc-800 pb-2">
+                      <h2
+                        key={idx}
+                        className="text-2xl font-bold text-white mt-8 mb-4 border-b border-zinc-800 pb-2"
+                      >
                         {paragraph.replace('## ', '')}
                       </h2>
                     );
                   }
                   if (paragraph.startsWith('# ')) {
-                    return null; // Already rendered in header
+                    return null;
                   }
                   if (paragraph.startsWith('---')) {
                     return <hr key={idx} className="border-zinc-800 my-6" />;
@@ -82,13 +100,15 @@ export const ResourcesPage: React.FC = () => {
               ) : (
                 <div className="p-8 rounded-2xl bg-zinc-900 border border-zinc-800 text-center space-y-3">
                   <p className="text-zinc-400 text-sm">
-                    This resource is available as an enterprise technical whitepaper and reference manual.
+                    {locale === 'zh'
+                      ? '该资源作为企业级实战参考手册与白皮书提供。'
+                      : 'This resource is available as an enterprise technical whitepaper and reference manual.'}
                   </p>
                   <a
                     href="mailto:contact@visiongo.app"
                     className="inline-block px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-mono text-xs font-bold"
                   >
-                    Request Full Technical PDF
+                    {t.resourcesSection.requestPdf}
                   </a>
                 </div>
               )}
@@ -110,24 +130,24 @@ export const ResourcesPage: React.FC = () => {
           /* Resource List Mode */
           <>
             <SectionHeader
-              badge="Knowledge & Insights"
-              title="Technical Articles, Tutorials & Case Studies"
-              description="Learn how to architect resilient vision systems, minimize latency jitter, and deploy air-gapped machine learning models."
+              badge={t.resourcesSection.badge}
+              title={t.resourcesSection.title}
+              description={t.resourcesSection.description}
             />
 
             {/* Category Filter Pills */}
             <div className="flex flex-wrap items-center justify-center gap-2 mb-12">
               {categories.map((cat) => (
                 <button
-                  key={cat}
-                  onClick={() => setSelectedFilter(cat)}
+                  key={cat.key}
+                  onClick={() => setSelectedFilter(cat.key)}
                   className={`px-4 py-2 rounded-xl text-xs font-mono transition-all ${
-                    selectedFilter === cat
+                    selectedFilter === cat.key
                       ? 'bg-white text-zinc-950 font-bold shadow'
                       : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
                   }`}
                 >
-                  {cat}
+                  {cat.label}
                 </button>
               ))}
             </div>
@@ -160,7 +180,7 @@ export const ResourcesPage: React.FC = () => {
                   <div className="pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono text-zinc-400">
                     <span>{article.date}</span>
                     <span className="text-emerald-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                      Read More &rarr;
+                      {t.resourcesSection.readArticle} &rarr;
                     </span>
                   </div>
                 </div>

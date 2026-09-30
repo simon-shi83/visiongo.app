@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
-import { Terminal, BookOpen, Layers, Check, Copy } from 'lucide-react';
+import { Terminal, Check, Copy } from 'lucide-react';
 import { GithubIcon } from '../components/GithubIcon';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
-import { ARCHITECTURE_TECHNICAL_NOTE } from '../data/developerResources';
+import { getDeveloperResources, getArchitectureNote } from '../data/developerResources';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export const DevelopersPage: React.FC = () => {
+  const { t, locale } = useLanguage();
   const [activeTab, setActiveTab] = useState<'cpp' | 'python' | 'schema'>('cpp');
   const [copied, setCopied] = useState(false);
+
+  const developerResources = getDeveloperResources(locale);
+  const archNote = getArchitectureNote(locale);
 
   const codeSnippets = {
     cpp: `// Example: VisionRuntime Custom Inspection Node (C++20)
@@ -76,16 +81,20 @@ class LocalDriftMonitor(EdgeSupervisor):
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-28 pb-24">
       <SeoHead
-        title="Developers & SDK"
-        description="Comprehensive developer resources, C++ and Python SDK bindings, protocol schemas, and GitHub ecosystem."
+        title={t.nav.developers}
+        description={
+          locale === 'zh'
+            ? '工业视觉开发者资源：统一 C++ 与 Python SDK 契约头文件、现场总线 API 与开源社区生态。'
+            : 'Comprehensive developer resources, C++ and Python SDK bindings, protocol schemas, and GitHub ecosystem.'
+        }
         canonicalPath="/developers"
       />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
-          badge="Developer Hub"
-          title="Open Architecture & Developer Ecosystem"
-          description="Built on strict SDK isolation, standardized schemas, and vendor-neutral camera protocols."
+          badge={t.developersSection.badge}
+          title={t.developersSection.title}
+          description={t.developersSection.description}
         />
 
         {/* Technical Architecture Quote Box */}
@@ -93,61 +102,29 @@ class LocalDriftMonitor(EdgeSupervisor):
           <Terminal className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <div className="text-zinc-200 font-bold text-sm">
-              {ARCHITECTURE_TECHNICAL_NOTE.headline}
+              {archNote.headline}
             </div>
-            <p className="text-zinc-400">
-              &ldquo;{ARCHITECTURE_TECHNICAL_NOTE.text}&rdquo;
+            <p className="text-zinc-300">
+              &ldquo;{archNote.text}&rdquo;
             </p>
             <p className="text-zinc-400">
-              {ARCHITECTURE_TECHNICAL_NOTE.subtext}
+              {archNote.subtext}
             </p>
           </div>
         </div>
 
         {/* Developer Pillars */}
         <div id="docs" className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
-          <div className="p-7 rounded-2xl bg-zinc-900/40 border border-zinc-800">
-            <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 border border-emerald-500/20">
-              <BookOpen className="w-5 h-5" />
+          {developerResources.slice(0, 3).map((res) => (
+            <div key={res.id} className="p-7 rounded-2xl bg-zinc-900/40 border border-zinc-800">
+              <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 mb-3 inline-block">
+                {res.badge}
+              </span>
+              <h3 className="text-lg font-bold text-white mb-2">{res.title}</h3>
+              <p className="text-xs text-zinc-400 leading-relaxed mb-4">{res.description}</p>
+              <span className="text-xs font-mono text-emerald-400">{res.actionText} &rarr;</span>
             </div>
-            <h3 className="text-lg font-bold text-white mb-2">Core Documentation</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-              Detailed architectural specs for real-time thread affinity, memory-mapped shared
-              buffers, and OPC UA / Modbus fieldbus configuration.
-            </p>
-            <span className="text-xs font-mono text-emerald-400">Deterministic Engine Spec &rarr;</span>
-          </div>
-
-          <div id="sdk" className="p-7 rounded-2xl bg-zinc-900/40 border border-zinc-800">
-            <div className="w-10 h-10 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center mb-4 border border-cyan-500/20">
-              <Layers className="w-5 h-5" />
-            </div>
-            <h3 className="text-lg font-bold text-white mb-2">Standardized SDK</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-              Single-source-of-truth C++ and Python bindings. Zero tight coupling between
-              subsystems; all modules talk through verified protocol contracts.
-            </p>
-            <span className="text-xs font-mono text-cyan-400">SDK v2.4.0 Schemas &rarr;</span>
-          </div>
-
-          <div className="p-7 rounded-2xl bg-zinc-900/40 border border-zinc-800">
-            <div className="w-10 h-10 rounded-lg bg-zinc-800 text-white flex items-center justify-center mb-4 border border-zinc-700">
-              <GithubIcon className="w-5 h-5" />
-            </div>
-            <h3 className="text-lg font-bold text-white mb-2">GitHub Open Hub</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-              Open source adapters, hardware drivers for IDS, Basler, FLIR, and Hikrobot cameras,
-              and community inspection recipe repositories.
-            </p>
-            <a
-              href="https://github.com/simon-shi83/website"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1"
-            >
-              github.com/simon-shi83/website &rarr;
-            </a>
-          </div>
+          ))}
         </div>
 
         {/* Code Snippet Interactive Viewer */}
@@ -162,7 +139,7 @@ class LocalDriftMonitor(EdgeSupervisor):
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                C++20 Runtime Node
+                {t.developersSection.tabCpp}
               </button>
               <button
                 onClick={() => setActiveTab('python')}
@@ -172,7 +149,7 @@ class LocalDriftMonitor(EdgeSupervisor):
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                Python Edge Agent
+                {t.developersSection.tabPython}
               </button>
               <button
                 onClick={() => setActiveTab('schema')}
@@ -182,7 +159,7 @@ class LocalDriftMonitor(EdgeSupervisor):
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                SDK Schema Contract
+                {t.developersSection.tabSchema}
               </button>
             </div>
 
@@ -191,13 +168,36 @@ class LocalDriftMonitor(EdgeSupervisor):
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-300 transition-colors"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? 'Copied' : 'Copy Code'}</span>
+              <span>{copied ? t.developersSection.copied : t.developersSection.copyCode}</span>
             </button>
           </div>
 
           <pre className="p-6 text-xs sm:text-sm text-zinc-300 font-mono overflow-x-auto leading-relaxed bg-zinc-950">
             <code>{codeSnippets[activeTab]}</code>
           </pre>
+        </div>
+
+        {/* GitHub Community Banner */}
+        <div className="p-8 rounded-2xl bg-gradient-to-r from-zinc-900 to-zinc-900/60 border border-zinc-800 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="space-y-2 text-center md:text-left">
+            <div className="flex items-center justify-center md:justify-start gap-2">
+              <GithubIcon className="w-5 h-5 text-white" />
+              <h4 className="text-lg font-bold text-white">{t.developersSection.githubBannerTitle}</h4>
+            </div>
+            <p className="text-xs text-zinc-400 max-w-xl">{t.developersSection.githubBannerDesc}</p>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <a
+              href="https://github.com/simon-shi83/website"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-5 py-2.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-200 font-mono text-xs font-bold transition-colors flex items-center gap-2"
+            >
+              <GithubIcon className="w-4 h-4" />
+              <span>{t.developersSection.starOnGithub}</span>
+            </a>
+          </div>
         </div>
       </div>
     </div>

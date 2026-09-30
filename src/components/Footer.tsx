@@ -1,7 +1,9 @@
 import React from 'react';
 import { Mail, ArrowUpRight, ShieldCheck, Terminal, Cpu } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
-import { PRODUCT_LIST } from '../data/products';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { getProducts } from '../data/products';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface FooterProps {
   onNavigate: (path: string) => void;
@@ -9,6 +11,9 @@ interface FooterProps {
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => {
+  const { t, locale } = useLanguage();
+  const products = getProducts(locale);
+
   return (
     <footer className="bg-zinc-950 border-t border-zinc-800/80 text-zinc-400 font-sans">
       {/* Top Banner: Industrial Guarantee */}
@@ -19,20 +24,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span>AIR-GAPPED READY: ZERO FACTORY CLOUD DEPENDENCY</span>
+            <span>{t.footer.airGappedGuarantee}</span>
           </div>
           <div className="flex items-center gap-6 text-zinc-400">
             <span className="flex items-center gap-1.5">
               <Terminal className="w-3.5 h-3.5 text-zinc-500" />
-              C++20 & Python 3.10+ SDK
+              {t.footer.sdkPill}
             </span>
             <span className="flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-zinc-500" />
-              Sub-ms Jitter Engine
+              {t.footer.jitterPill}
             </span>
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
-              Edge Autonomous
+              {t.footer.autonomousPill}
             </span>
           </div>
         </div>
@@ -59,19 +64,23 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
             </div>
 
             <p className="text-sm text-zinc-400 leading-relaxed max-w-sm">
-              Industrial Vision Intelligence. Build, run, and improve industrial vision systems
-              with AI. Engineered for mission-critical manufacturing and air-gapped factory floors.
+              {t.footer.missionSummary}
             </p>
 
             <div className="pt-2 text-xs font-mono space-y-1.5 text-zinc-400">
-              <p>Primary Domain: <a href="https://visiongo.app" className="text-zinc-300 hover:text-white">visiongo.app</a></p>
-              <p>Deployment: Cloudflare Global Edge Network</p>
+              <p>
+                {t.footer.primaryDomain}{' '}
+                <a href="https://visiongo.app" className="text-zinc-300 hover:text-white">
+                  visiongo.app
+                </a>
+              </p>
+              <p>{t.footer.deploymentCloudflare}</p>
             </div>
 
             {/* Email contact links */}
             <div className="pt-3 space-y-2">
               <div className="text-xs uppercase font-mono tracking-wider text-zinc-400">
-                Direct Engineering Inquiries
+                {t.footer.inquiriesTitle}
               </div>
               <div className="flex flex-col gap-1.5 text-xs font-mono">
                 <a
@@ -102,10 +111,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
           {/* Products Col */}
           <div>
             <div className="text-xs font-mono uppercase tracking-wider text-zinc-300 mb-4 font-semibold">
-              Products
+              {t.nav.products}
             </div>
             <ul className="space-y-2.5 text-sm">
-              {PRODUCT_LIST.map((product) => (
+              {products.map((product) => (
                 <li key={product.id}>
                   <button
                     onClick={() => onNavigate(`/products/${product.slug}`)}
@@ -123,7 +132,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/solutions')}
                   className="text-emerald-400/90 hover:text-emerald-300 transition-colors text-xs font-mono flex items-center gap-1"
                 >
-                  All Solutions <ArrowUpRight className="w-3 h-3" />
+                  {t.footer.allSolutionsLink} <ArrowUpRight className="w-3 h-3" />
                 </button>
               </li>
             </ul>
@@ -132,7 +141,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
           {/* Developers Col */}
           <div>
             <div className="text-xs font-mono uppercase tracking-wider text-zinc-300 mb-4 font-semibold">
-              Developers
+              {t.nav.developers}
             </div>
             <ul className="space-y-2.5 text-sm">
               <li>
@@ -140,7 +149,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/developers#docs')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Documentation
+                  {locale === 'zh' ? '架构与文档' : 'Documentation'}
                 </button>
               </li>
               <li>
@@ -148,7 +157,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/developers#sdk')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Standardized SDK
+                  {locale === 'zh' ? '标准化 SDK' : 'Standardized SDK'}
                 </button>
               </li>
               <li>
@@ -156,7 +165,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/developers#api')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Fieldbus & API Reference
+                  {locale === 'zh' ? '现场总线与 API 参考' : 'Fieldbus & API Reference'}
                 </button>
               </li>
               <li>
@@ -164,7 +173,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/developers#examples')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Inspection Recipes
+                  {locale === 'zh' ? '检测配方与模板' : 'Inspection Recipes'}
                 </button>
               </li>
               <li>
@@ -184,7 +193,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
           {/* Resources & Company Col */}
           <div>
             <div className="text-xs font-mono uppercase tracking-wider text-zinc-300 mb-4 font-semibold">
-              Resources & About
+              {t.footer.aboutTitle}
             </div>
             <ul className="space-y-2.5 text-sm">
               <li>
@@ -192,7 +201,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/resources')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Technical Articles
+                  {locale === 'zh' ? '技术文章' : 'Technical Articles'}
                 </button>
               </li>
               <li>
@@ -200,7 +209,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/resources#tutorials')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Tutorials & Guides
+                  {locale === 'zh' ? '开发教程' : 'Tutorials & Guides'}
                 </button>
               </li>
               <li>
@@ -208,7 +217,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/resources#case-studies')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Industrial Case Studies
+                  {locale === 'zh' ? '实战案例' : 'Industrial Case Studies'}
                 </button>
               </li>
               <li>
@@ -216,7 +225,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/resources#releases')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  Release Notes
+                  {locale === 'zh' ? '发版日志' : 'Release Notes'}
                 </button>
               </li>
               <li>
@@ -224,7 +233,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={() => onNavigate('/about')}
                   className="text-zinc-400 hover:text-white transition-colors"
                 >
-                  About VISIONGO
+                  {t.nav.about} VISIONGO
                 </button>
               </li>
               <li className="pt-2">
@@ -232,7 +241,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
                   onClick={onOpenContact}
                   className="text-xs font-mono text-zinc-300 hover:text-white border border-zinc-800 px-3 py-1.5 rounded-md hover:border-zinc-700 transition-colors"
                 >
-                  Enterprise Consultation
+                  {t.footer.enterpriseConsultation}
                 </button>
               </li>
             </ul>
@@ -242,13 +251,19 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenContact }) => 
         {/* Bottom Bar */}
         <div className="border-t border-zinc-900 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-zinc-400">
           <div>
-            &copy; {new Date().getFullYear()} VISIONGO. Industrial Vision Intelligence. All rights reserved.
+            &copy; {new Date().getFullYear()} {t.footer.copyright}
           </div>
-          <div className="flex items-center gap-6">
-            <span className="text-zinc-400">Target Domain: https://visiongo.app</span>
-            <span className="text-zinc-400">|</span>
-            <a href="https://github.com/simon-shi83/website" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300">
-              Open Source Ecosystem
+          <div className="flex items-center gap-4">
+            <LanguageSwitcher variant="full" />
+            <span className="text-zinc-700">|</span>
+            <a
+              href="https://github.com/simon-shi83/website"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-zinc-300 flex items-center gap-1.5"
+            >
+              <GithubIcon className="w-3.5 h-3.5" />
+              {t.footer.openEcosystem}
             </a>
           </div>
         </div>

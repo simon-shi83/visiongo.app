@@ -1,13 +1,31 @@
 import React, { useState } from 'react';
 import { ArrowDown, ArrowRight, ArrowUpDown, Shield, Cpu, Sparkles, Sliders, CheckCircle2, Lock } from 'lucide-react';
-import { PRODUCTS } from '../data/products';
+import { getProduct } from '../data/products';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface ArchitectureDiagramProps {
   onNavigateProduct: (slug: string) => void;
 }
 
 export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavigateProduct }) => {
+  const { t, locale } = useLanguage();
   const [activeNode, setActiveNode] = useState<string>('runtime');
+
+  const studio = getProduct('visionstudio', locale);
+  const runtime = getProduct('visionruntime', locale);
+  const edge = getProduct('visionedge', locale);
+  const cloud = getProduct('visioncloud', locale);
+
+  const activeProduct = getProduct(
+    activeNode === 'runtime'
+      ? 'visionruntime'
+      : activeNode === 'studio'
+      ? 'visionstudio'
+      : activeNode === 'edge'
+      ? 'visionedge'
+      : 'visioncloud',
+    locale
+  );
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-6 md:p-10 tech-grid relative overflow-hidden">
@@ -23,21 +41,20 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
           </div>
           <div>
             <div className="text-sm font-semibold text-white flex items-center gap-2">
-              <span>Industrial Independence Guarantee</span>
-              <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">
-                AIR-GAPPED READY
+              <span>{t.architectureSection.independenceTitle}</span>
+              <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-bold">
+                {t.architectureSection.independenceBadge}
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Core industrial operation does not depend on the cloud. Designed for real industrial
-              environments, including plant floors without Internet access.
+            <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+              {t.architectureSection.independenceDesc}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 text-xs font-mono text-zinc-400 bg-zinc-950/60 px-3 py-1.5 rounded-lg border border-zinc-800">
           <Lock className="w-3.5 h-3.5 text-zinc-400" />
-          Zero External Telemetry Needed
+          {t.architectureSection.zeroTelemetry}
         </div>
       </div>
 
@@ -65,18 +82,16 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-base">VisionStudio</span>
+                      <span className="font-bold text-white text-base">{studio.name}</span>
                       <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded">
-                        Build
+                        {studio.shortAction}
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Engineering design, algorithm testing, workflow builder, hardware simulator
-                    </p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{studio.summary}</p>
                   </div>
                 </div>
                 <div className="text-xs font-mono text-cyan-400 hidden sm:block">
-                  Recipe & Pipeline Bundles →
+                  {locale === 'zh' ? '输出配方与管线包 →' : 'Recipe & Pipeline Bundles →'}
                 </div>
               </div>
             </div>
@@ -85,7 +100,7 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
             <div className="flex justify-center my-3 text-zinc-600">
               <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 bg-zinc-900/80 px-3 py-1 rounded-full border border-zinc-800">
                 <ArrowDown className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Compiled Recipe Export (SDK Schemas)</span>
+                <span>{t.architectureSection.recipeExportDesc}</span>
               </div>
             </div>
           </div>
@@ -93,7 +108,7 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
           {/* Level 2: Factory Floor Core (Runtime & Edge) */}
           <div className="border border-emerald-500/30 rounded-2xl p-5 bg-emerald-950/10 relative">
             <div className="absolute -top-3 left-6 px-2.5 py-0.5 bg-zinc-900 text-[10px] font-mono font-semibold uppercase tracking-wider text-emerald-400 border border-emerald-500/30 rounded">
-              Factory Floor Boundary (100% Offline Capable)
+              {t.architectureSection.factoryBoundaryTitle}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-11 gap-4 items-center pt-2">
@@ -115,19 +130,18 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-base">VisionRuntime</span>
+                      <span className="font-bold text-white text-base">{runtime.name}</span>
                       <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
-                        Run
+                        {runtime.shortAction}
                       </span>
                     </div>
-                    <p className="text-[11px] font-mono text-zinc-400">Production Execution</p>
+                    <p className="text-[11px] font-mono text-zinc-400">{runtime.positioning}</p>
                   </div>
                 </div>
-                <p className="text-xs text-zinc-300 leading-relaxed mb-3">
-                  Image acquisition, deterministic pipeline, zero-copy framebuffer, Modbus/OPC UA fieldbus.
-                </p>
+                <p className="text-xs text-zinc-300 leading-relaxed mb-3">{runtime.summary}</p>
                 <div className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> Sub-millisecond hard real-time
+                  <CheckCircle2 className="w-3 h-3" />{' '}
+                  {locale === 'zh' ? '亚毫秒硬实时控制闭环' : 'Sub-millisecond hard real-time'}
                 </div>
               </div>
 
@@ -135,7 +149,7 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
               <div className="md:col-span-1 flex flex-col items-center justify-center text-zinc-500 py-2">
                 <ArrowUpDown className="w-5 h-5 text-violet-400 rotate-90 md:rotate-0" />
                 <span className="text-[9px] font-mono text-zinc-400 mt-1 uppercase tracking-tight text-center">
-                  Local Loop
+                  {t.architectureSection.localLoopDesc}
                 </span>
               </div>
 
@@ -157,19 +171,18 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-base">VisionEdge</span>
+                      <span className="font-bold text-white text-base">{edge.name}</span>
                       <span className="text-xs font-mono text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded">
-                        Assist
+                        {edge.shortAction}
                       </span>
                     </div>
-                    <p className="text-[11px] font-mono text-zinc-400">On-site Intelligence</p>
+                    <p className="text-[11px] font-mono text-zinc-400">{edge.positioning}</p>
                   </div>
                 </div>
-                <p className="text-xs text-zinc-300 leading-relaxed mb-3">
-                  Autonomous anomaly verification, parameter drift compensation, instant fail-safe rollback.
-                </p>
+                <p className="text-xs text-zinc-300 leading-relaxed mb-3">{edge.summary}</p>
                 <div className="text-[10px] font-mono text-violet-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> 100% Offline local intelligence
+                  <CheckCircle2 className="w-3 h-3" />{' '}
+                  {locale === 'zh' ? '100% 离线本地边缘智能' : '100% Offline local intelligence'}
                 </div>
               </div>
             </div>
@@ -180,7 +193,7 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
             <div className="flex justify-center mb-3 text-zinc-600">
               <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 bg-zinc-900/80 px-3 py-1 rounded-full border border-dashed border-zinc-700">
                 <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                <span>Optional Cloud Telemetry & Asynchronous Sync</span>
+                <span>{t.architectureSection.cloudSyncDesc}</span>
               </div>
             </div>
 
@@ -202,21 +215,19 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-base">VisionCloud</span>
+                      <span className="font-bold text-white text-base">{cloud.name}</span>
                       <span className="text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
-                        Extend
+                        {cloud.shortAction}
                       </span>
                       <span className="text-[10px] font-mono bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">
-                        OPTIONAL LAYER
+                        {t.architectureSection.optionalLayer}
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Cloud LLMs, cross-factory defect clustering, fleet yield benchmarking, model repository
-                    </p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{cloud.summary}</p>
                   </div>
                 </div>
                 <div className="text-xs font-mono text-amber-400/80 hidden sm:block">
-                  Enterprise Aggregation
+                  {locale === 'zh' ? '企业级知识沉淀' : 'Enterprise Aggregation'}
                 </div>
               </div>
             </div>
@@ -227,73 +238,38 @@ export const ArchitectureDiagram: React.FC<ArchitectureDiagramProps> = ({ onNavi
         <div className="lg:col-span-4 bg-zinc-900/90 border border-zinc-800 rounded-xl p-6 self-stretch flex flex-col justify-between">
           <div>
             <div className="text-[11px] uppercase font-mono tracking-wider text-zinc-400 mb-3 flex items-center justify-between">
-              <span>Architecture Spec</span>
-              <span className="text-emerald-400">Node Active</span>
+              <span>{locale === 'zh' ? '架构节点参数规格' : 'Architecture Spec'}</span>
+              <span className="text-emerald-400">{t.architectureSection.specActive}</span>
             </div>
 
-            {activeNode === 'studio' && (
-              <div className="space-y-3">
-                <h4 className="text-lg font-bold text-white">{PRODUCTS.visionstudio.name}</h4>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {PRODUCTS.visionstudio.description}
+            <div className="space-y-3">
+              <h4 className="text-lg font-bold text-white">{activeProduct.name}</h4>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                {activeProduct.description}
+              </p>
+              <div className="space-y-1.5 text-xs font-mono pt-3 border-t border-zinc-800 text-zinc-400">
+                <p>
+                  <span className="text-zinc-500">{locale === 'zh' ? '部署环境:' : 'Target:'}</span>{' '}
+                  {activeProduct.deploymentTarget}
                 </p>
-                <div className="space-y-1.5 text-xs font-mono pt-3 border-t border-zinc-800 text-zinc-400">
-                  <p><span className="text-zinc-500">Target:</span> Workstation / PC</p>
-                  <p><span className="text-zinc-500">Output:</span> Compiled Recipe Bundle</p>
-                  <p><span className="text-zinc-500">Role:</span> Engineering & Authoring</p>
-                </div>
-              </div>
-            )}
-
-            {activeNode === 'runtime' && (
-              <div className="space-y-3">
-                <h4 className="text-lg font-bold text-white">{PRODUCTS.visionruntime.name}</h4>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {PRODUCTS.visionruntime.description}
+                <p>
+                  <span className="text-zinc-500">{locale === 'zh' ? '网络需求:' : 'Network:'}</span>{' '}
+                  <span className="text-emerald-400">{activeProduct.connectivityRequirement}</span>
                 </p>
-                <div className="space-y-1.5 text-xs font-mono pt-3 border-t border-zinc-800 text-zinc-400">
-                  <p><span className="text-zinc-500">Execution:</span> 24/7 Factory Industrial PC</p>
-                  <p><span className="text-zinc-500">Latency:</span> Sub-millisecond Deterministic</p>
-                  <p><span className="text-zinc-500">Fieldbus:</span> Modbus, OPC UA, EtherCAT</p>
-                </div>
-              </div>
-            )}
-
-            {activeNode === 'edge' && (
-              <div className="space-y-3">
-                <h4 className="text-lg font-bold text-white">{PRODUCTS.visionedge.name}</h4>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {PRODUCTS.visionedge.description}
+                <p>
+                  <span className="text-zinc-500">{locale === 'zh' ? '架构定位:' : 'Role:'}</span>{' '}
+                  {activeProduct.architectureRole}
                 </p>
-                <div className="space-y-1.5 text-xs font-mono pt-3 border-t border-zinc-800 text-zinc-400">
-                  <p><span className="text-zinc-500">Connectivity:</span> 100% Offline / Air-Gapped</p>
-                  <p><span className="text-zinc-500">Intelligence:</span> Neural Verification & Anomaly</p>
-                  <p><span className="text-zinc-500">Safety:</span> Auto Rollback on Deviation</p>
-                </div>
               </div>
-            )}
-
-            {activeNode === 'cloud' && (
-              <div className="space-y-3">
-                <h4 className="text-lg font-bold text-white">{PRODUCTS.visioncloud.name}</h4>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {PRODUCTS.visioncloud.description}
-                </p>
-                <div className="space-y-1.5 text-xs font-mono pt-3 border-t border-zinc-800 text-zinc-400">
-                  <p><span className="text-zinc-500">Topology:</span> Multi-tenant Cloud Services</p>
-                  <p><span className="text-zinc-500">Requirement:</span> Optional (Non-blocking)</p>
-                  <p><span className="text-zinc-500">Function:</span> LLM Reasoning & Fleet Analytics</p>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
 
           <div className="pt-6 border-t border-zinc-800/80">
             <button
-              onClick={() => onNavigateProduct(PRODUCTS[activeNode === 'runtime' ? 'visionruntime' : activeNode === 'studio' ? 'visionstudio' : activeNode === 'edge' ? 'visionedge' : 'visioncloud'].slug)}
+              onClick={() => onNavigateProduct(activeProduct.slug)}
               className="w-full py-2 px-3 rounded-lg text-xs font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-white flex items-center justify-center gap-1.5 transition-colors"
             >
-              <span>View Product Detail</span>
+              <span>{t.architectureSection.viewProductDetail}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
