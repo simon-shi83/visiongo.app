@@ -15,13 +15,11 @@
   },
   "routes": [
     {
-      "pattern": "visiongo.app/*",
-      "zone_name": "visiongo.app",
+      "pattern": "visiongo.app",
       "custom_domain": true
     },
     {
-      "pattern": "www.visiongo.app/*",
-      "zone_name": "visiongo.app",
+      "pattern": "www.visiongo.app",
       "custom_domain": true
     }
   ]
