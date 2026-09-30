@@ -76,6 +76,7 @@ export const ContactPage: React.FC = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={locale === 'zh' ? '工程咨询与企业部署' : 'Architecture & Enterprise Pilots'}
           title={locale === 'zh' ? '联系 VISIONGO 技术团队' : 'Contact VISIONGO'}
           description={

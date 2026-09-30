@@ -21,6 +21,7 @@ export const AboutPage: React.FC<AboutPageProps> = ({ onOpenContact }) => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={t.aboutPage.badge}
           title={t.aboutPage.title}
           description={t.aboutPage.description}

@@ -11,7 +11,7 @@ export const SeoHead = ({ title, description, canonicalPath = '/' }: SeoHeadProp
   const { locale } = useLanguage();
 
   useEffect(() => {
-    const fullTitle = `${title} | VISIONGO`;
+    const fullTitle = title.includes('VISIONGO') ? title : `${title} | VISIONGO`;
     document.title = fullTitle;
 
     // Update Meta Description
@@ -41,9 +41,19 @@ export const SeoHead = ({ title, description, canonicalPath = '/' }: SeoHeadProp
     ogLocale.setAttribute('content', locale === 'zh' ? 'zh_CN' : 'en_US');
 
     // Update Canonical URL
+    const canonicalHref = canonicalPath === '/' ? 'https://visiongo.app/' : `https://visiongo.app${canonicalPath.startsWith('/') ? canonicalPath : `/${canonicalPath}`}`;
     let canonical = document.querySelector('link[rel="canonical"]');
-    if (canonical) {
-      canonical.setAttribute('href', `https://visiongo.app${canonicalPath}`);
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.setAttribute('rel', 'canonical');
+      document.head.appendChild(canonical);
+    }
+    canonical.setAttribute('href', canonicalHref);
+
+    // Update OpenGraph URL
+    let ogUrl = document.querySelector('meta[property="og:url"]');
+    if (ogUrl) {
+      ogUrl.setAttribute('content', canonicalHref);
     }
   }, [title, description, canonicalPath, locale]);
 

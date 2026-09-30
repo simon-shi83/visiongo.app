@@ -31,6 +31,41 @@ export default {
     const url = new URL(request.url);
 
     // =========================================================================
+    // Canonical Host, Protocol, and URL Normalization (301 Permanent Redirect)
+    // =========================================================================
+    const hostname = url.hostname.toLowerCase();
+    const forwardedProto = request.headers.get('x-forwarded-proto') || (url.protocol ? url.protocol.replace(':', '') : 'https');
+    
+    // In production, force HTTPS and root domain visiongo.app
+    const isProductionCustomDomain = hostname === 'www.visiongo.app' || hostname === 'visiongo.app';
+    if (isProductionCustomDomain && (hostname === 'www.visiongo.app' || forwardedProto === 'http')) {
+      const redirectUrl = new URL(request.url);
+      redirectUrl.hostname = 'visiongo.app';
+      redirectUrl.protocol = 'https:';
+      return Response.redirect(redirectUrl.toString(), 301);
+    }
+
+    // Redirect /index.html -> /
+    if (url.pathname === '/index.html') {
+      const redirectUrl = new URL(request.url);
+      redirectUrl.pathname = '/';
+      return Response.redirect(redirectUrl.toString(), 301);
+    }
+
+    // Normalize trailing slash on non-root paths: /downloads/ -> /downloads
+    // (Only for GET/HEAD requests, skip API routes)
+    if (
+      url.pathname.length > 1 &&
+      url.pathname.endsWith('/') &&
+      !url.pathname.startsWith('/api/') &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
+      const redirectUrl = new URL(request.url);
+      redirectUrl.pathname = url.pathname.slice(0, -1);
+      return Response.redirect(redirectUrl.toString(), 301);
+    }
+
+    // =========================================================================
     // 1. Health check endpoint: GET /api/health
     // =========================================================================
     if (url.pathname === '/api/health') {
@@ -433,25 +468,69 @@ export default {
     // 7. Static Assets & Direct SEO Route Handling
     // =========================================================================
 
-    // Handle robots.txt and sitemap.xml directly
-    if (url.pathname === '/robots.txt' || url.pathname === '/sitemap.xml') {
+    // A. Handle robots.txt and sitemap.xml directly
+    if (url.pathname === '/robots.txt') {
       const assetRes = await env.ASSETS.fetch(request);
-      if (assetRes.status >= 400) {
-        return new Response('Not Found', { status: 404 });
-      }
-      return assetRes;
+      if (assetRes.status >= 400) return new Response('User-agent: *\nAllow: /\nSitemap: https://visiongo.app/sitemap.xml\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      const headers = new Headers(assetRes.headers);
+      headers.set('Content-Type', 'text/plain; charset=utf-8');
+      headers.set('Cache-Control', 'public, max-age=3600');
+      return new Response(assetRes.body, { status: 200, headers });
     }
 
-    // Guard static assets: Non-existent /assets/* files must 404, never return HTML SPA
-    if (url.pathname.startsWith('/assets/')) {
+    if (url.pathname === '/sitemap.xml') {
       const assetRes = await env.ASSETS.fetch(request);
-      if (assetRes.status >= 400 || assetRes.headers.get('Content-Type')?.includes('text/html')) {
+      if (assetRes.status >= 400) return new Response('Not Found', { status: 404 });
+      const headers = new Headers(assetRes.headers);
+      headers.set('Content-Type', 'application/xml; charset=utf-8');
+      headers.set('Cache-Control', 'public, max-age=3600');
+      return new Response(assetRes.body, { status: 200, headers });
+    }
+
+    // B. Static asset files (e.g. /assets/*, images, fonts, icons)
+    const isStaticAsset =
+      url.pathname.startsWith('/assets/') ||
+      /\.(svg|png|jpg|jpeg|gif|ico|webp|woff|woff2|ttf|css|js|map|json|txt|xml)$/i.test(url.pathname);
+
+    if (isStaticAsset) {
+      const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes.status >= 400 || (url.pathname.startsWith('/assets/') && assetRes.headers.get('Content-Type')?.includes('text/html'))) {
         return new Response('Asset Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
       }
       return assetRes;
     }
 
-    // Known direct public routes: Fetch prerendered snapshot directly if available
+    // Security headers helper for all HTML responses
+    const applySecurityHeaders = (headers: Headers, is404 = false) => {
+      headers.set('X-Content-Type-Options', 'nosniff');
+      headers.set('X-Frame-Options', 'DENY');
+      headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+      headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+      headers.set('Content-Type', 'text/html; charset=utf-8');
+      if (is404) {
+        headers.set('X-Robots-Tag', 'noindex, nofollow');
+        headers.set('Cache-Control', 'no-store');
+      } else {
+        headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+      }
+    };
+
+    // C. Root route: /
+    if (url.pathname === '/') {
+      let homeRes = await env.ASSETS.fetch(new Request(new URL('/home.html', request.url)));
+      if (homeRes.status !== 200) {
+        homeRes = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url)));
+      }
+      if (homeRes.status !== 200) {
+        homeRes = await env.ASSETS.fetch(new Request(new URL('/', request.url)));
+      }
+      const headers = new Headers(homeRes.headers);
+      headers.delete('location'); // Strip any redirect location header
+      applySecurityHeaders(headers);
+      return new Response(homeRes.body, { status: 200, headers });
+    }
+
+    // D. Known public routes: Return corresponding pre-rendered HTML snapshot with status 200
     const knownDirectRoutes = [
       '/products/visionstudio',
       '/products/visionruntime',
@@ -467,39 +546,41 @@ export default {
       '/terms',
     ];
 
-    const cleanPath = url.pathname.replace(/\/$/, '');
-    if (knownDirectRoutes.includes(cleanPath)) {
-      // Fetch /route/index.html snapshot directly to ensure instant HTTP 200 without redirect
-      const snapshotReq = new Request(new URL(`${cleanPath}/index.html`, request.url), request);
-      const snapshotRes = await env.ASSETS.fetch(snapshotReq);
+    if (knownDirectRoutes.includes(url.pathname)) {
+      // Try fetching ${url.pathname}.html or ${url.pathname}/index.html from dist
+      let snapshotRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}.html`, request.url)));
+      if (snapshotRes.status !== 200) {
+        snapshotRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}/index.html`, request.url)));
+      }
+      if (snapshotRes.status !== 200) {
+        snapshotRes = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url)));
+      }
+
       if (snapshotRes.status === 200) {
         const headers = new Headers(snapshotRes.headers);
-        headers.set('X-Content-Type-Options', 'nosniff');
-        headers.set('X-Frame-Options', 'DENY');
-        headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-        headers.set('Content-Type', 'text/html; charset=utf-8');
-
-        return new Response(snapshotRes.body, {
-          status: 200,
-          headers,
-        });
+        applySecurityHeaders(headers);
+        return new Response(snapshotRes.body, { status: 200, headers });
       }
     }
 
-    // Fallback: serve root SPA document via Cloudflare Workers Assets
-    const response = await env.ASSETS.fetch(request);
+    // E. Authenticated client application routes: /my, /account
+    if (url.pathname === '/my' || url.pathname === '/account') {
+      const spaRes = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+      const headers = new Headers(spaRes.headers);
+      applySecurityHeaders(headers);
+      return new Response(spaRes.body, { status: 200, headers });
+    }
 
-    const newHeaders = new Headers(response.headers);
-    newHeaders.set('X-Content-Type-Options', 'nosniff');
-    newHeaders.set('X-Frame-Options', 'DENY');
-    newHeaders.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    newHeaders.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    // F. Unknown route -> Return custom 404.html with real HTTP 404 status!
+    const notFoundReq = new Request(new URL('/404.html', request.url), request);
+    const notFoundRes = await env.ASSETS.fetch(notFoundReq);
+    const notFoundHeaders = new Headers(notFoundRes.headers);
+    applySecurityHeaders(notFoundHeaders, true);
 
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: newHeaders,
+    return new Response(notFoundRes.body, {
+      status: 404,
+      statusText: 'Not Found',
+      headers: notFoundHeaders,
     });
   },
 };

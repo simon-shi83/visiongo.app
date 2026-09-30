@@ -193,6 +193,7 @@ class LocalDriftMonitor(EdgeSupervisor):
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={t.developersSection.badge}
           title={t.developersSection.title}
           description={t.developersSection.description}

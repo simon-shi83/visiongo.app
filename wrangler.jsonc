@@ -7,8 +7,7 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "html_handling": "auto-trailing-slash"
+    "run_worker_first": true
   },
   // To enable Cloudflare Workers Analytics Engine:
   // 1. Visit: https://dash.cloudflare.com/9a750ae5472b30301cd3aa878c5da2a9/workers/analytics-engine

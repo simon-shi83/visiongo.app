@@ -17,11 +17,20 @@ import { AccountPage } from './pages/AccountPage';
 import { LanguageProvider } from './i18n/LanguageContext';
 import { AuthProvider } from './context/AuthContext';
 
-const AppContent: React.FC = () => {
-  const [currentPath, setCurrentPath] = useState<string>(window.location.pathname || '/');
+interface AppProps {
+  initialPath?: string;
+}
+
+const AppContent: React.FC<AppProps> = ({ initialPath }) => {
+  const [currentPath, setCurrentPath] = useState<string>(() => {
+    if (initialPath) return initialPath;
+    if (typeof window !== 'undefined') return window.location.pathname || '/';
+    return '/';
+  });
   const [isContactOpen, setIsContactOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const handlePopState = () => {
       setCurrentPath(window.location.pathname);
     };
@@ -140,11 +149,11 @@ const AppContent: React.FC = () => {
   );
 };
 
-export const App: React.FC = () => {
+export const App: React.FC<AppProps> = ({ initialPath }) => {
   return (
     <AuthProvider>
       <LanguageProvider>
-        <AppContent />
+        <AppContent initialPath={initialPath} />
       </LanguageProvider>
     </AuthProvider>
   );

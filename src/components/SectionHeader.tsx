@@ -6,6 +6,7 @@ interface SectionHeaderProps {
   description?: string;
   align?: 'left' | 'center';
   className?: string;
+  as?: 'h1' | 'h2';
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
@@ -14,6 +15,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   description,
   align = 'center',
   className = '',
+  as: HeadingTag = 'h2',
 }) => {
   return (
     <div
@@ -25,9 +27,9 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
         {badge}
       </div>
-      <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-4">
+      <HeadingTag className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-4">
         {title}
-      </h2>
+      </HeadingTag>
       {description && (
         <p className="text-base md:text-lg text-zinc-400 leading-relaxed font-normal">
           {description}

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/generate-routes.js",
+    "build": "tsc && vite build && node scripts/generate-routes.js && node scripts/verify-seo.js",
     "typecheck": "tsc --noEmit",
+    "test:seo": "node scripts/verify-seo.js",
     "preview": "vite preview",
     "deploy": "wrangler deploy"
   },

@@ -130,6 +130,7 @@ export const ResourcesPage: React.FC = () => {
           /* Resource List Mode */
           <>
             <SectionHeader
+              as="h1"
               badge={t.resourcesSection.badge}
               title={t.resourcesSection.title}
               description={t.resourcesSection.description}

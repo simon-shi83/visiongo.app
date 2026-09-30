@@ -21,6 +21,7 @@ export const PrivacyPolicyPage: React.FC = () => {
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={locale === 'zh' ? '透明与安全' : 'Transparency & Privacy'}
           title={locale === 'zh' ? 'VISIONGO 隐私政策' : 'Privacy Policy'}
           description={

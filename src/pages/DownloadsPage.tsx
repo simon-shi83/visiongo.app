@@ -102,6 +102,7 @@ export const DownloadsPage: React.FC<DownloadsPageProps> = ({
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={locale === 'zh' ? '官方发行包与工具' : 'Official Binaries & Software'}
           title={locale === 'zh' ? '下载 VISIONGO 工业级软件系统' : 'Download VISIONGO Software'}
           description={

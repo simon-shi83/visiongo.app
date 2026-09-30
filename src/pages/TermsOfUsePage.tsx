@@ -21,6 +21,7 @@ export const TermsOfUsePage: React.FC = () => {
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <SectionHeader
+          as="h1"
           badge={locale === 'zh' ? '规范与授权' : 'Legal & Terms'}
           title={locale === 'zh' ? 'VISIONGO 使用条款' : 'Terms of Use'}
           description={
