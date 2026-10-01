@@ -68,6 +68,8 @@ export interface AnalyticsEngineDataset {
 
 export interface User {
   id: string;
+  tenantId: string;
+  role: 'super_admin' | 'org_admin' | 'member';
   googleSub: string;
   email: string;
   displayName?: string;
@@ -102,4 +104,7 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
+  DESKTOP_TOKEN_PRIVATE_KEY?: string;
+  DESKTOP_TOKEN_KEY_ID?: string;
+  DESKTOP_TOKEN_ISSUER?: string;
 }

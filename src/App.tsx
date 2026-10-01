@@ -14,7 +14,9 @@ import { DownloadableProduct } from './types/downloads';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { AccountPage } from './pages/AccountPage';
+import { DesktopAuthPage } from './pages/DesktopAuthPage';
 import { LanguageProvider } from './i18n/LanguageContext';
+
 import { AuthProvider } from './context/AuthContext';
 
 interface AppProps {
@@ -102,7 +104,10 @@ const AppContent: React.FC<AppProps> = ({ initialPath }) => {
       case '/my':
       case '/account':
         return <AccountPage onNavigate={navigate} />;
+      case '/auth/desktop':
+        return <DesktopAuthPage />;
       case '/solutions':
+
         return (
           <SolutionsPage
             onNavigate={navigate}

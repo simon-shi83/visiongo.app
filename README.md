@@ -95,6 +95,9 @@ A configuration template is provided in [`.env.example`](.env.example).
 | `DOWNLOAD_ANALYTICS_SECRET` | Secret | Cloudflare Secret | Cryptographic salt used for pseudonymous HMAC visitor deduplication. |
 | `GOOGLE_CLIENT_ID` | Variable/Secret | Cloudflare Secret | Google OAuth 2.0 Web Client ID from Google Cloud Console. |
 | `SESSION_SECRET` | Secret | Cloudflare Secret | Cryptographic key used to sign `vg_session` HttpOnly session cookies. |
+| `DESKTOP_TOKEN_PRIVATE_KEY` | Secret | Cloudflare Secret | PKCS#8 RSA private key used only for short-lived VisionStudio tokens. |
+| `DESKTOP_TOKEN_KEY_ID` | Variable | Worker Env | Signing key identifier; must match VisionCloud's configured key ID. |
+| `DESKTOP_TOKEN_ISSUER` | Variable | Worker Env | Token issuer, normally `https://visiongo.app`. |
 | `DOWNLOADS_CACHE_TTL_SEC` | Variable | Worker Env | In-worker cache TTL for release metadata (default: `600` seconds). |
 
 ### Configuring Secrets in Cloudflare Workers
@@ -111,6 +114,9 @@ npx wrangler secret put SESSION_SECRET
 
 # 4. Optional: Google OAuth Web Client ID
 npx wrangler secret put GOOGLE_CLIENT_ID
+
+# 5. Independent PKCS#8 RSA key for VisionStudio desktop tokens
+npx wrangler secret put DESKTOP_TOKEN_PRIVATE_KEY
 ```
 
 ---
@@ -135,19 +141,23 @@ The command outputs your `database_id`. Add it to `wrangler.jsonc`:
 ```
 
 ### 2. Apply Migrations
-The version-controlled migration file is located at [`migrations/0001_create_users_and_downloads.sql`](migrations/0001_create_users_and_downloads.sql).
+Version-controlled migrations live in [`migrations/`](migrations/). Apply them in numeric order.
 
 ```bash
 # Apply migrations locally for testing:
 npx wrangler d1 execute visiongo_db --local --file=migrations/0001_create_users_and_downloads.sql
+npx wrangler d1 execute visiongo_db --local --file=migrations/0002_add_cloud_identity.sql
 
 # Apply migrations to production Cloudflare D1:
 npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql
+npx wrangler d1 execute visiongo_db --remote --file=migrations/0002_add_cloud_identity.sql
 ```
 
 ### 3. Database Schema
 - **`users`**:
   - `id` (TEXT PRIMARY KEY, internal UUID like `vg_usr_xxxxx`)
+  - `tenant_id` (TEXT, indexed stable Cloud tenant scope; organization members may share it)
+  - `role` (`member`, `org_admin`, or `super_admin`)
   - `google_sub` (TEXT UNIQUE NOT NULL, stable Google subject identifier)
   - `email` (TEXT NOT NULL)
   - `display_name` (TEXT)
@@ -190,13 +200,16 @@ Returns current authenticated user profile (`{ user: { id, email, displayName, a
 ### 5. `POST /api/auth/logout`
 Terminates the session by clearing `vg_session` cookie.
 
-### 6. `GET /api/user/downloads`
+### 6. `POST /api/auth/desktop-token`
+Validates the HttpOnly website session and returns a ten-minute RS256 token scoped to the user's tenant. VisionStudio passes this opaque token through VisionEdge to VisionCloud.
+
+### 7. `GET /api/user/downloads`
 Returns the authenticated user's software download history from D1.
 
-### 7. `POST /api/contact`
+### 8. `POST /api/contact`
 Enterprise pilot and architecture consultation submission handler with bot honeypot protection.
 
-### 8. `GET /api/health`
+### 9. `GET /api/health`
 Edge status, CF data center code, and D1/Analytics readiness probe.
 
 ---
@@ -312,6 +325,7 @@ The following actions must be executed manually by the project maintainer:
   - Run `npx wrangler d1 create visiongo_db`
   - Paste the generated `database_id` into `wrangler.jsonc`
   - Run `npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql`
+  - Run `npx wrangler d1 execute visiongo_db --remote --file=migrations/0002_add_cloud_identity.sql`
 - [ ] **Cloudflare Analytics Engine**:
   - Visit `https://dash.cloudflare.com/<ACCOUNT_ID>/workers/analytics-engine` and click **Enable Analytics Engine**
   - Uncomment the `analytics_engine_datasets` block in `wrangler.jsonc`
@@ -319,6 +333,7 @@ The following actions must be executed manually by the project maintainer:
   - Run `npx wrangler secret put GITHUB_RELEASE_TOKEN` (Fine-grained PAT with read access to private repos)
   - Run `npx wrangler secret put DOWNLOAD_ANALYTICS_SECRET` (HMAC salt for anonymous download deduplication)
   - Run `npx wrangler secret put SESSION_SECRET` (Cryptographic key for signing session cookies)
+  - Run `npx wrangler secret put DESKTOP_TOKEN_PRIVATE_KEY` (Independent PKCS#8 RSA signing key for desktop tokens)
   - Run `npx wrangler secret put GOOGLE_CLIENT_ID` (Web Client ID from Google Cloud Console)
 - [ ] **Google Cloud Console (OAuth & Sign-In)**:
   - Create OAuth 2.0 Web Application client

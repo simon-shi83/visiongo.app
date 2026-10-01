@@ -24,6 +24,12 @@ import {
   getUserById,
   recordUserDownloadHistory,
   getUserDownloadHistory,
+  createDesktopAccessToken,
+  createDesktopAuthCode,
+  verifyDesktopAuthCode,
+  verifyPkceChallenge,
+  createDesktopRefreshToken,
+  verifyDesktopRefreshToken,
 } from './auth';
 
 export default {
@@ -211,7 +217,7 @@ export default {
 
       // Check if this download was initiated by an authenticated user
       const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET || 'visiongo-session-secret-2026');
+      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
       if (session?.userId) {
         // Associate download with user in D1 non-blockingly
         const recordUserTask = recordUserDownloadHistory(
@@ -355,7 +361,7 @@ export default {
         const { cookieHeader } = await createSessionCookie(
           user.id,
           user.googleSub,
-          env.SESSION_SECRET || 'visiongo-session-secret-2026'
+          env.SESSION_SECRET
         );
 
         return new Response(
@@ -389,7 +395,7 @@ export default {
     // GET /api/auth/me - Retrieve current authenticated user
     if (url.pathname === '/api/auth/me' && request.method === 'GET') {
       const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET || 'visiongo-session-secret-2026');
+      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
 
       if (!session) {
         return new Response(JSON.stringify({ user: null }), {
@@ -423,6 +429,260 @@ export default {
       );
     }
 
+    // OPTIONS for public auth endpoints (Desktop client / Studio)
+    if ((url.pathname === '/api/auth/token' || url.pathname === '/api/auth/refresh') && request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
+    // POST /api/auth/desktop-code - Mint a 5-minute single-use authorization code for PKCE flow.
+    // Authentication comes from the HttpOnly website session cookie.
+    if (url.pathname === '/api/auth/desktop-code' && request.method === 'POST') {
+      const cookieHeader = request.headers.get('Cookie');
+      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
+      if (!session) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+      const user = await getUserById(env, session.userId);
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Authenticated user no longer exists' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          code_challenge?: string;
+          code_challenge_method?: string;
+        };
+        if (!body.code_challenge) {
+          return new Response(JSON.stringify({ error: 'code_challenge is required' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+          });
+        }
+        const method = body.code_challenge_method === 'plain' ? 'plain' : 'S256';
+        const code = await createDesktopAuthCode(user, body.code_challenge, method, env.SESSION_SECRET);
+        return new Response(
+          JSON.stringify({
+            code,
+            expires_in: 300,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+          }
+        );
+      } catch (err) {
+        console.error('[Desktop Code Error]:', err);
+        return new Response(JSON.stringify({ error: 'Failed to create authorization code' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+    }
+
+    // POST /api/auth/token - Exchange authorization code + code_verifier for Access & Refresh tokens.
+    if (url.pathname === '/api/auth/token' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          grant_type?: string;
+          code?: string;
+          code_verifier?: string;
+        };
+        if (body.grant_type !== 'authorization_code' || !body.code || !body.code_verifier) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_request', error_description: 'grant_type=authorization_code, code, and code_verifier are required' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const authCode = await verifyDesktopAuthCode(body.code, env.SESSION_SECRET);
+        if (!authCode) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_grant', error_description: 'Authorization code is invalid or expired' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const isPkceValid = await verifyPkceChallenge(body.code_verifier, authCode.codeChallenge, authCode.codeChallengeMethod);
+        if (!isPkceValid) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE code_verifier verification failed' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const user = await getUserById(env, authCode.userId);
+        if (!user) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_grant', error_description: 'User not found' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const token = await createDesktopAccessToken(env, user);
+        const refreshToken = await createDesktopRefreshToken(user, env.SESSION_SECRET);
+
+        return new Response(
+          JSON.stringify({
+            access_token: token.accessToken,
+            token_type: 'Bearer',
+            expires_in: token.expiresIn,
+            refresh_token: refreshToken,
+            tenant_id: token.tenantId,
+            user_id: user.id,
+            username: user.displayName || user.email.split('@')[0],
+            email: user.email,
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
+      } catch (err) {
+        console.error('[Token Exchange Error]:', err);
+        return new Response(
+          JSON.stringify({ error: 'server_error', error_description: 'Failed to exchange authorization code' }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+          }
+        );
+      }
+    }
+
+    // POST /api/auth/refresh - Refresh desktop access token using refresh_token.
+    if (url.pathname === '/api/auth/refresh' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          refresh_token?: string;
+        };
+        if (!body.refresh_token) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_request', error_description: 'refresh_token is required' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const refreshPayload = await verifyDesktopRefreshToken(body.refresh_token, env.SESSION_SECRET);
+        if (!refreshPayload) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token is invalid or expired' }),
+            {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const user = await getUserById(env, refreshPayload.userId);
+        if (!user) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_grant', error_description: 'User not found' }),
+            {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            }
+          );
+        }
+
+        const token = await createDesktopAccessToken(env, user);
+        return new Response(
+          JSON.stringify({
+            access_token: token.accessToken,
+            token_type: 'Bearer',
+            expires_in: token.expiresIn,
+            tenant_id: token.tenantId,
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
+      } catch (err) {
+        console.error('[Token Refresh Error]:', err);
+        return new Response(
+          JSON.stringify({ error: 'server_error', error_description: 'Failed to refresh token' }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+          }
+        );
+      }
+    }
+
+    // POST /api/auth/desktop-token - Mint a short-lived Cloud access token.
+    // Authentication comes exclusively from the HttpOnly website session cookie.
+    if (url.pathname === '/api/auth/desktop-token' && request.method === 'POST') {
+      const cookieHeader = request.headers.get('Cookie');
+      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
+      if (!session) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+      const user = await getUserById(env, session.userId);
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Authenticated user no longer exists' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+      try {
+        const token = await createDesktopAccessToken(env, user);
+        return new Response(JSON.stringify({
+          access_token: token.accessToken,
+          token_type: 'Bearer',
+          expires_in: token.expiresIn,
+          tenant_id: token.tenantId,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      } catch (err) {
+        console.error('[Desktop Token Error]:', err);
+        return new Response(JSON.stringify({ error: 'Desktop authorization is not configured' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+      }
+    }
+
     // POST /api/auth/logout - Terminate session
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
       const expiredCookie = 'vg_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
@@ -438,7 +698,7 @@ export default {
     // GET /api/user/downloads - Retrieve authenticated user's download history
     if (url.pathname === '/api/user/downloads' && request.method === 'GET') {
       const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET || 'visiongo-session-secret-2026');
+      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
 
       if (!session) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
