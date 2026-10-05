@@ -12,6 +12,10 @@ interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   loginWithGoogle: (credential: string) => Promise<boolean>;
+  loginWithGitHub: (mock?: boolean) => Promise<boolean>;
+  sendEmailCode: (email: string, purpose?: 'register' | 'login') => Promise<{ success: boolean; message?: string; error?: string; devCode?: string }>;
+  registerWithEmail: (email: string, code: string, password: string, displayName?: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -59,8 +63,102 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       return false;
     } catch (err) {
-      console.error('[AuthContext] Login error:', err);
+      console.error('[AuthContext] Google Login error:', err);
       return false;
+    }
+  };
+
+  const loginWithGitHub = async (mock: boolean = true): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/auth/github/direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mock }),
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data.user) {
+        setUser(data.user);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('[AuthContext] GitHub Login error:', err);
+      return false;
+    }
+  };
+
+  const sendEmailCode = async (
+    email: string,
+    purpose: 'register' | 'login' = 'register'
+  ): Promise<{ success: boolean; message?: string; error?: string; devCode?: string }> => {
+    try {
+      const res = await fetch('/api/auth/email/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, purpose }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '发送验证码失败' };
+      }
+      return { success: true, message: data.message, devCode: data.devCode };
+    } catch {
+      return { success: false, error: '网络连接失败，请检查网络设置' };
+    }
+  };
+
+  const registerWithEmail = async (
+    email: string,
+    code: string,
+    password: string,
+    displayName?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch('/api/auth/email/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, password, displayName }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '注册失败' };
+      }
+      if (data.user) {
+        setUser(data.user);
+        return { success: true };
+      }
+      return { success: false, error: '注册未返回有效用户信息' };
+    } catch {
+      return { success: false, error: '网络连接失败，请稍后重试' };
+    }
+  };
+
+  const loginWithEmail = async (
+    email: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch('/api/auth/email/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '登录失败' };
+      }
+      if (data.user) {
+        setUser(data.user);
+        return { success: true };
+      }
+      return { success: false, error: '登录未返回有效用户信息' };
+    } catch {
+      return { success: false, error: '网络连接失败，请稍后重试' };
     }
   };
 
@@ -73,7 +171,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        loginWithGoogle,
+        loginWithGitHub,
+        sendEmailCode,
+        registerWithEmail,
+        loginWithEmail,
+        logout,
+        refreshUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

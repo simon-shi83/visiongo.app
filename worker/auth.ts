@@ -20,7 +20,8 @@ export interface GoogleProfile {
 
 export interface SessionPayload {
   userId: string;
-  googleSub: string;
+  googleSub?: string;
+  authSubject?: string;
   exp: number; // Unix timestamp in ms
 }
 
@@ -148,17 +149,173 @@ export async function verifyGoogleIdToken(
   }
 }
 
+// In-memory fallbacks when D1 database is not yet bound
+const fallbackCodes = new Map<string, { code: string; expiresAt: number; purpose: string }>();
+const fallbackUsers = new Map<string, User & { passwordHash?: string; passwordSalt?: string }>();
+
+/**
+ * Derives a PBKDF2 hash using Web Crypto API.
+ */
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: enc.encode(salt),
+      iterations: 50000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256
+  );
+  return Array.from(new Uint8Array(derivedBits))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export function generateSalt(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function generateVerificationCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+export async function saveVerificationCode(
+  env: Env,
+  email: string,
+  code: string,
+  purpose: string = 'register'
+): Promise<void> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+  const now = new Date().toISOString();
+
+  if (env.DB) {
+    try {
+      await env.DB.prepare('DELETE FROM email_verification_codes WHERE email = ?')
+        .bind(normalizedEmail)
+        .run();
+
+      const id = `code_${crypto.randomUUID().slice(0, 12)}`;
+      await env.DB.prepare(
+        'INSERT INTO email_verification_codes (id, email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+        .bind(id, normalizedEmail, code, purpose, expiresAt, now)
+        .run();
+      return;
+    } catch (err) {
+      console.warn('[D1 Auth Warning] Failed to insert verification code in D1, using fallback:', err);
+    }
+  }
+
+  fallbackCodes.set(`${normalizedEmail}:${purpose}`, { code, expiresAt, purpose });
+}
+
+export async function verifyAndConsumeCode(
+  env: Env,
+  email: string,
+  code: string,
+  purpose: string = 'register'
+): Promise<boolean> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const inputCode = code.trim();
+  const now = Date.now();
+
+  if (env.DB) {
+    try {
+      const record = await env.DB.prepare(
+        'SELECT id, code, expires_at FROM email_verification_codes WHERE email = ? AND purpose = ? ORDER BY expires_at DESC LIMIT 1'
+      )
+        .bind(normalizedEmail, purpose)
+        .first<{ id: string; code: string; expires_at: number }>();
+
+      if (record && record.code === inputCode && record.expires_at > now) {
+        await env.DB.prepare('DELETE FROM email_verification_codes WHERE id = ?')
+          .bind(record.id)
+          .run();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('[D1 Auth Warning] Failed to verify code in D1, using fallback:', err);
+    }
+  }
+
+  const key = `${normalizedEmail}:${purpose}`;
+  const record = fallbackCodes.get(key);
+  if (record && record.code === inputCode && record.expiresAt > now) {
+    fallbackCodes.delete(key);
+    return true;
+  }
+  return false;
+}
+
+export async function sendVerificationEmail(
+  env: Env,
+  email: string,
+  code: string
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[Email Service] Verification code for ${email}: ${code}`);
+
+  if (env.RESEND_API_KEY) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'VISIONGO <auth@visiongo.app>',
+          to: [email],
+          subject: `[VISIONGO] 注册验证码: ${code}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 540px; margin: 0 auto; padding: 32px 24px; background: #09090b; color: #f4f4f5; border-radius: 16px; border: 1px solid #27272a;">
+              <h2 style="color: #10b981; margin-top: 0; font-size: 20px;">VISIONGO 工业视觉智能平台</h2>
+              <p style="font-size: 14px; color: #a1a1aa; line-height: 1.6;">您正在申请注册或登录 VISIONGO 账户。请在页面中输入以下 6 位验证码：</p>
+              <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
+                <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #ffffff;">${code}</span>
+              </div>
+              <p style="font-size: 12px; color: #71717a; margin-bottom: 0;">验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>
+            </div>
+          `,
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn(`[Resend Error] Status ${res.status}`);
+      } else {
+        return { success: true };
+      }
+    } catch (err) {
+      console.warn('[Resend Request Error]', err);
+    }
+  }
+
+  return { success: true };
+}
+
 /**
  * Creates a signed session cookie string using HMAC-SHA256.
  */
 export async function createSessionCookie(
   userId: string,
-  googleSub: string,
+  authSubject: string,
   secretKey?: string
 ): Promise<{ cookieHeader: string; sessionPayload: SessionPayload }> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const exp = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-  const sessionPayload: SessionPayload = { userId, googleSub, exp };
+  const sessionPayload: SessionPayload = { userId, googleSub: authSubject, authSubject, exp };
 
   const encoder = new TextEncoder();
   const payloadJson = JSON.stringify(sessionPayload);
@@ -213,7 +370,6 @@ export async function verifySessionCookie(
       ['verify']
     );
 
-    // Reconstruct signature binary
     const binarySig = atob(sigB64.replace(/-/g, '+').replace(/_/g, '/'));
     const sigBytes = new Uint8Array(binarySig.length);
     for (let i = 0; i < binarySig.length; i++) {
@@ -227,7 +383,7 @@ export async function verifySessionCookie(
     const payload = JSON.parse(decodedJson) as SessionPayload;
 
     if (Date.now() > payload.exp) {
-      return null; // Expired session
+      return null;
     }
 
     return payload;
@@ -237,7 +393,264 @@ export async function verifySessionCookie(
 }
 
 /**
- * Upserts a user in Cloudflare D1. Falls back to mock state if DB is not bound.
+ * Queries user by email across D1 and fallback storage.
+ */
+export async function getUserByEmail(
+  env: Env,
+  email: string
+): Promise<(User & { passwordHash?: string; passwordSalt?: string }) | null> {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  if (env.DB) {
+    try {
+      const row = await env.DB.prepare(
+        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, password_hash, password_salt, created_at, last_login_at FROM users WHERE LOWER(email) = ?'
+      )
+        .bind(normalizedEmail)
+        .first<{
+          id: string;
+          tenant_id: string;
+          role: 'super_admin' | 'org_admin' | 'member';
+          google_sub: string | null;
+          github_id: string | null;
+          auth_provider: 'google' | 'github' | 'email' | null;
+          email: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          password_hash: string | null;
+          password_salt: string | null;
+          created_at: string;
+          last_login_at: string;
+        }>();
+
+      if (row) {
+        return {
+          id: row.id,
+          tenantId: row.tenant_id,
+          role: row.role,
+          googleSub: row.google_sub || undefined,
+          githubId: row.github_id || undefined,
+          authProvider: row.auth_provider || 'email',
+          email: row.email,
+          displayName: row.display_name || undefined,
+          avatarUrl: row.avatar_url || undefined,
+          passwordHash: row.password_hash || undefined,
+          passwordSalt: row.password_salt || undefined,
+          createdAt: row.created_at,
+          lastLoginAt: row.last_login_at,
+        };
+      }
+    } catch (err) {
+      console.warn('[D1 Auth Warning] Failed to query user by email in D1:', err);
+    }
+  }
+
+  return fallbackUsers.get(normalizedEmail) || null;
+}
+
+/**
+ * Registers a new user via verified email and password.
+ */
+export async function registerUserWithEmail(
+  env: Env,
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<{ user?: User; error?: string }> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const existing = await getUserByEmail(env, normalizedEmail);
+  if (existing) {
+    return { error: '该邮箱已被注册，请直接登录' };
+  }
+
+  const salt = generateSalt();
+  const hash = await hashPassword(password, salt);
+  const now = new Date().toISOString();
+  const newUserId = `vg_usr_${crypto.randomUUID().slice(0, 12)}`;
+  const tenantId = `vg_tenant_${crypto.randomUUID().slice(0, 12)}`;
+  const finalDisplayName = displayName?.trim() || normalizedEmail.split('@')[0];
+
+  const newUser: User & { passwordHash: string; passwordSalt: string } = {
+    id: newUserId,
+    tenantId,
+    role: 'member',
+    email: normalizedEmail,
+    displayName: finalDisplayName,
+    authProvider: 'email',
+    passwordHash: hash,
+    passwordSalt: salt,
+    createdAt: now,
+    lastLoginAt: now,
+  };
+
+  if (env.DB) {
+    try {
+      const syntheticSub = `email:${normalizedEmail}`;
+      await env.DB.prepare(
+        'INSERT INTO users (id, tenant_id, role, google_sub, auth_provider, email, display_name, password_hash, password_salt, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+        .bind(
+          newUserId,
+          tenantId,
+          'member',
+          syntheticSub,
+          'email',
+          normalizedEmail,
+          finalDisplayName,
+          hash,
+          salt,
+          now,
+          now
+        )
+        .run();
+    } catch (err) {
+      console.warn('[D1 Auth Warning] Failed to insert email user into D1:', err);
+    }
+  }
+
+  fallbackUsers.set(normalizedEmail, newUser);
+  return { user: newUser };
+}
+
+/**
+ * Validates email and password, returning user if valid.
+ */
+export async function loginUserWithEmail(
+  env: Env,
+  email: string,
+  password: string
+): Promise<{ user?: User; error?: string }> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const userRecord = await getUserByEmail(env, normalizedEmail);
+  if (!userRecord || !userRecord.passwordHash || !userRecord.passwordSalt) {
+    return { error: '邮箱或密码错误，请重试' };
+  }
+
+  const computedHash = await hashPassword(password, userRecord.passwordSalt);
+  if (computedHash !== userRecord.passwordHash) {
+    return { error: '邮箱或密码错误，请重试' };
+  }
+
+  const now = new Date().toISOString();
+  if (env.DB) {
+    try {
+      await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+        .bind(now, userRecord.id)
+        .run();
+    } catch {
+      // Ignore update error
+    }
+  }
+  userRecord.lastLoginAt = now;
+
+  return { user: userRecord };
+}
+
+export interface GitHubProfile {
+  id: string | number;
+  login: string;
+  name?: string;
+  email?: string;
+  avatar_url?: string;
+}
+
+/**
+ * Upserts a GitHub OAuth user into D1 / fallback.
+ */
+export async function getOrCreateGitHubUser(
+  env: Env,
+  profile: GitHubProfile
+): Promise<User> {
+  const now = new Date().toISOString();
+  const githubId = String(profile.id);
+  const email = (profile.email || `${profile.login}@users.noreply.github.com`).toLowerCase().trim();
+  const displayName = profile.name || profile.login;
+  const avatarUrl = profile.avatar_url;
+
+  if (env.DB) {
+    try {
+      const existing = await env.DB.prepare(
+        'SELECT id, tenant_id, role, google_sub, github_id, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE github_id = ? OR (google_sub = ?)'
+      )
+        .bind(githubId, `github:${githubId}`)
+        .first<{
+          id: string;
+          tenant_id: string;
+          role: 'super_admin' | 'org_admin' | 'member';
+          google_sub: string | null;
+          github_id: string | null;
+          email: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          created_at: string;
+          last_login_at: string;
+        }>();
+
+      if (existing) {
+        await env.DB.prepare(
+          'UPDATE users SET last_login_at = ?, display_name = ?, avatar_url = ?, github_id = ? WHERE id = ?'
+        )
+          .bind(now, displayName, avatarUrl || existing.avatar_url, githubId, existing.id)
+          .run();
+
+        return {
+          id: existing.id,
+          tenantId: existing.tenant_id,
+          role: existing.role,
+          githubId,
+          authProvider: 'github',
+          email: existing.email,
+          displayName,
+          avatarUrl: avatarUrl || existing.avatar_url || undefined,
+          createdAt: existing.created_at,
+          lastLoginAt: now,
+        };
+      }
+
+      const newUserId = `vg_usr_${crypto.randomUUID().slice(0, 12)}`;
+      const tenantId = `vg_tenant_${crypto.randomUUID().slice(0, 12)}`;
+      const syntheticSub = `github:${githubId}`;
+      await env.DB.prepare(
+        'INSERT INTO users (id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+        .bind(newUserId, tenantId, 'member', syntheticSub, githubId, 'github', email, displayName, avatarUrl || null, now, now)
+        .run();
+
+      return {
+        id: newUserId,
+        tenantId,
+        role: 'member',
+        githubId,
+        authProvider: 'github',
+        email,
+        displayName,
+        avatarUrl,
+        createdAt: now,
+        lastLoginAt: now,
+      };
+    } catch (err) {
+      console.warn('[D1 Auth Warning] Failed to query/insert GitHub user in D1:', err);
+    }
+  }
+
+  const fallbackUser: User = {
+    id: `vg_usr_gh_${githubId.slice(0, 8)}`,
+    tenantId: `vg_tenant_gh_${githubId.slice(0, 8)}`,
+    role: 'member',
+    githubId,
+    authProvider: 'github',
+    email,
+    displayName,
+    avatarUrl,
+    createdAt: now,
+    lastLoginAt: now,
+  };
+  fallbackUsers.set(email, fallbackUser);
+  return fallbackUser;
+}
+
+/**
+ * Upserts a Google user in Cloudflare D1. Falls back to mock state if DB is not bound.
  */
 export async function getOrCreateUser(
   env: Env,
@@ -275,6 +688,7 @@ export async function getOrCreateUser(
           tenantId: existing.tenant_id,
           role: existing.role,
           googleSub: existing.google_sub,
+          authProvider: 'google',
           email: existing.email,
           displayName: profile.name || existing.display_name || undefined,
           avatarUrl: profile.picture || existing.avatar_url || undefined,
@@ -287,9 +701,9 @@ export async function getOrCreateUser(
       const newUserId = `vg_usr_${crypto.randomUUID().slice(0, 12)}`;
       const tenantId = `vg_tenant_${crypto.randomUUID().slice(0, 12)}`;
       await env.DB.prepare(
-        'INSERT INTO users (id, tenant_id, role, google_sub, email, display_name, avatar_url, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO users (id, tenant_id, role, google_sub, auth_provider, email, display_name, avatar_url, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
-        .bind(newUserId, tenantId, 'member', profile.sub, profile.email, profile.name || null, profile.picture || null, now, now)
+        .bind(newUserId, tenantId, 'member', profile.sub, 'google', profile.email, profile.name || null, profile.picture || null, now, now)
         .run();
 
       return {
@@ -297,6 +711,7 @@ export async function getOrCreateUser(
         tenantId,
         role: 'member',
         googleSub: profile.sub,
+        authProvider: 'google',
         email: profile.email,
         displayName: profile.name,
         avatarUrl: profile.picture,
@@ -309,34 +724,39 @@ export async function getOrCreateUser(
   }
 
   // Graceful fallback when D1 is not yet provisioned
-  return {
+  const fallbackUser: User = {
     id: `vg_usr_demo_${profile.sub.slice(0, 8)}`,
     tenantId: `vg_tenant_demo_${profile.sub.slice(0, 8)}`,
     role: 'member',
     googleSub: profile.sub,
+    authProvider: 'google',
     email: profile.email,
     displayName: profile.name || profile.email.split('@')[0],
     avatarUrl: profile.picture,
     createdAt: now,
     lastLoginAt: now,
   };
+  fallbackUsers.set(profile.email.toLowerCase(), fallbackUser);
+  return fallbackUser;
 }
 
 /**
- * Loads a user by their internal UUID from D1.
+ * Loads a user by their internal UUID from D1 or fallback.
  */
 export async function getUserById(env: Env, userId: string): Promise<User | null> {
   if (env.DB) {
     try {
       const row = await env.DB.prepare(
-        'SELECT id, tenant_id, role, google_sub, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE id = ?'
+        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE id = ?'
       )
         .bind(userId)
         .first<{
           id: string;
           tenant_id: string;
           role: 'super_admin' | 'org_admin' | 'member';
-          google_sub: string;
+          google_sub: string | null;
+          github_id: string | null;
+          auth_provider: 'google' | 'github' | 'email' | null;
           email: string;
           display_name: string | null;
           avatar_url: string | null;
@@ -349,7 +769,9 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
           id: row.id,
           tenantId: row.tenant_id,
           role: row.role,
-          googleSub: row.google_sub,
+          googleSub: row.google_sub || undefined,
+          githubId: row.github_id || undefined,
+          authProvider: row.auth_provider || 'google',
           email: row.email,
           displayName: row.display_name || undefined,
           avatarUrl: row.avatar_url || undefined,
@@ -360,6 +782,10 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
     } catch (err) {
       console.warn('[D1 getUserById Warning]:', err);
     }
+  }
+
+  for (const user of fallbackUsers.values()) {
+    if (user.id === userId) return user;
   }
 
   return null;

@@ -4,13 +4,12 @@ import {
   Download,
   History,
   LogOut,
-  ShieldCheck,
   ArrowRight,
   Package,
 } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
-import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AuthCard } from '../components/AuthCard';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -97,35 +96,18 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
 
             <div className="space-y-2">
               <h3 className="text-xl font-bold text-white">
-                {locale === 'zh' ? '登录您的工程账号' : 'Sign in to My VISIONGO'}
+                {locale === 'zh' ? '登录 / 注册您的工程账号' : 'Sign in to My VISIONGO'}
               </h3>
               <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
                 {locale === 'zh'
-                  ? '使用 Google 账号一键安全登录，同步查看您下载的各产品发版历史及现场部署记录。'
-                  : 'Sign in with your Google account to access your download records and manage factory deployment packages.'}
+                  ? '支持 Google、GitHub 快捷登录或工作邮箱验证码注册，同步管理工业软件发版历史与现场部署。'
+                  : 'Sign in with Google, GitHub, or your work email to access download history and industrial deployment packages.'}
               </p>
             </div>
 
-            {/* Google Sign In Component */}
+            {/* Comprehensive Auth Component */}
             <div className="pt-2">
-              <GoogleSignInButton />
-            </div>
-
-            <div className="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-left space-y-2 text-xs font-mono text-zinc-400">
-              <div className="flex items-center gap-2 text-emerald-400 font-semibold">
-                <ShieldCheck className="w-4 h-4 shrink-0" />
-                <span>{locale === 'zh' ? '隐私与无密码承诺' : 'Data Minimization & Privacy'}</span>
-              </div>
-              <p className="text-[11px] leading-relaxed">
-                {locale === 'zh'
-                  ? '• 仅请求公开个人资料与邮箱，VISIONGO 绝不接触您的 Google 密码。'
-                  : '• Requests only public profile and email. We never handle your password.'}
-              </p>
-              <p className="text-[11px] leading-relaxed">
-                {locale === 'zh'
-                  ? '• 匿名下载完全不受影响，您无需登录亦可在 /downloads 自由下载软件。'
-                  : '• Anonymous downloads remain 100% available without an account.'}
-              </p>
+              <AuthCard />
             </div>
           </div>
         ) : (

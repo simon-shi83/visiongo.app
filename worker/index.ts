@@ -30,6 +30,14 @@ import {
   verifyPkceChallenge,
   createDesktopRefreshToken,
   verifyDesktopRefreshToken,
+  generateVerificationCode,
+  saveVerificationCode,
+  verifyAndConsumeCode,
+  sendVerificationEmail,
+  getUserByEmail,
+  registerUserWithEmail,
+  loginUserWithEmail,
+  getOrCreateGitHubUser,
 } from './auth';
 
 export default {
@@ -334,6 +342,366 @@ export default {
     // =========================================================================
     // 5. Authentication APIs: /api/auth/*
     // =========================================================================
+
+    // GET /api/auth/config - Public auth configuration
+    if (url.pathname === '/api/auth/config' && request.method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          googleClientId: env.GOOGLE_CLIENT_ID || null,
+          githubClientId: env.GITHUB_CLIENT_ID || null,
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=60',
+          },
+        }
+      );
+    }
+
+    // POST /api/auth/email/send-code - Send 6-digit verification code to email
+    if (url.pathname === '/api/auth/email/send-code' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as { email?: string; purpose?: string };
+        const email = (body.email || '').trim().toLowerCase();
+        const purpose = body.purpose === 'login' ? 'login' : 'register';
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!email || !emailRegex.test(email)) {
+          return new Response(
+            JSON.stringify({ error: '请输入有效的邮箱地址' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (purpose === 'register') {
+          const existing = await getUserByEmail(env, email);
+          if (existing) {
+            return new Response(
+              JSON.stringify({ error: '该邮箱已被注册，请直接登录' }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+
+        const code = generateVerificationCode();
+        await saveVerificationCode(env, email, code, purpose);
+        await sendVerificationEmail(env, email, code);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: '验证码已发送至您的邮箱，10分钟内有效',
+            devCode: !env.RESEND_API_KEY ? code : undefined,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      } catch (err) {
+        console.error('[Send Code Error]:', err);
+        return new Response(
+          JSON.stringify({ error: '发送验证码失败，请稍后重试' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // POST /api/auth/email/register - Register with verified email and password
+    if (url.pathname === '/api/auth/email/register' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string;
+          code?: string;
+          password?: string;
+          displayName?: string;
+        };
+
+        const email = (body.email || '').trim().toLowerCase();
+        const code = (body.code || '').trim();
+        const password = body.password || '';
+        const displayName = (body.displayName || '').trim();
+
+        if (!email || !code || !password) {
+          return new Response(
+            JSON.stringify({ error: '邮箱、验证码和密码为必填项' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (password.length < 6) {
+          return new Response(
+            JSON.stringify({ error: '密码长度不能少于 6 位' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const isCodeValid = await verifyAndConsumeCode(env, email, code, 'register');
+        if (!isCodeValid) {
+          return new Response(
+            JSON.stringify({ error: '验证码错误或已过期，请重新获取' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const regResult = await registerUserWithEmail(env, email, password, displayName);
+        if (regResult.error || !regResult.user) {
+          return new Response(
+            JSON.stringify({ error: regResult.error || '注册失败' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const user = regResult.user;
+        const { cookieHeader } = await createSessionCookie(
+          user.id,
+          user.email,
+          env.SESSION_SECRET
+        );
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              displayName: user.displayName,
+              avatarUrl: user.avatarUrl,
+              createdAt: user.createdAt,
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Set-Cookie': cookieHeader,
+            },
+          }
+        );
+      } catch (err) {
+        console.error('[Register Error]:', err);
+        return new Response(
+          JSON.stringify({ error: '注册发生服务异常，请重试' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // POST /api/auth/email/login - Authenticate with email & password
+    if (url.pathname === '/api/auth/email/login' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
+        const email = (body.email || '').trim().toLowerCase();
+        const password = body.password || '';
+
+        if (!email || !password) {
+          return new Response(
+            JSON.stringify({ error: '请输入邮箱和密码' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const loginResult = await loginUserWithEmail(env, email, password);
+        if (loginResult.error || !loginResult.user) {
+          return new Response(
+            JSON.stringify({ error: loginResult.error || '邮箱或密码错误' }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const user = loginResult.user;
+        const { cookieHeader } = await createSessionCookie(
+          user.id,
+          user.email,
+          env.SESSION_SECRET
+        );
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              displayName: user.displayName,
+              avatarUrl: user.avatarUrl,
+              createdAt: user.createdAt,
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Set-Cookie': cookieHeader,
+            },
+          }
+        );
+      } catch (err) {
+        console.error('[Email Login Error]:', err);
+        return new Response(
+          JSON.stringify({ error: '登录服务异常，请稍后重试' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // GET /api/auth/github - Start GitHub OAuth flow
+    if (url.pathname === '/api/auth/github' && request.method === 'GET') {
+      const returnUrl = url.searchParams.get('returnUrl') || '/account';
+      if (!env.GITHUB_CLIENT_ID) {
+        return Response.redirect(`${url.origin}${returnUrl}?auth_notice=github_not_configured`, 302);
+      }
+      const state = btoa(JSON.stringify({ returnUrl, t: Date.now() }));
+      const redirectUri = `${url.origin}/api/auth/github/callback`;
+      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
+        env.GITHUB_CLIENT_ID
+      )}&scope=user:email&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+      return Response.redirect(githubAuthUrl, 302);
+    }
+
+    // GET /api/auth/github/callback - GitHub OAuth callback handler
+    if (url.pathname === '/api/auth/github/callback' && request.method === 'GET') {
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      let returnUrl = '/account';
+      if (state) {
+        try {
+          const parsed = JSON.parse(atob(state));
+          if (parsed.returnUrl) returnUrl = parsed.returnUrl;
+        } catch {
+          // Ignore state decoding error
+        }
+      }
+
+      if (!code) {
+        return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_cancelled`, 302);
+      }
+
+      try {
+        const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            client_id: env.GITHUB_CLIENT_ID,
+            client_secret: env.GITHUB_CLIENT_SECRET,
+            code,
+          }),
+        });
+
+        const tokenData = (await tokenRes.json()) as { access_token?: string; error?: string };
+        if (!tokenData.access_token) {
+          return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_token_failed`, 302);
+        }
+
+        const userRes = await fetch('https://api.github.com/user', {
+          headers: {
+            'Authorization': `Bearer ${tokenData.access_token}`,
+            'User-Agent': 'VISIONGO-Website-Auth',
+            'Accept': 'application/json',
+          },
+        });
+        const ghUser = (await userRes.json()) as {
+          id: number;
+          login: string;
+          name?: string;
+          email?: string;
+          avatar_url?: string;
+        };
+
+        let email = ghUser.email;
+        if (!email) {
+          const emailsRes = await fetch('https://api.github.com/user/emails', {
+            headers: {
+              'Authorization': `Bearer ${tokenData.access_token}`,
+              'User-Agent': 'VISIONGO-Website-Auth',
+              'Accept': 'application/json',
+            },
+          });
+          if (emailsRes.ok) {
+            const emails = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
+            const primary = emails.find(e => e.primary && e.verified) || emails[0];
+            if (primary) email = primary.email;
+          }
+        }
+
+        const user = await getOrCreateGitHubUser(env, {
+          id: ghUser.id,
+          login: ghUser.login,
+          name: ghUser.name,
+          email: email || `${ghUser.login}@users.noreply.github.com`,
+          avatar_url: ghUser.avatar_url,
+        });
+
+        const { cookieHeader } = await createSessionCookie(
+          user.id,
+          user.githubId || user.email,
+          env.SESSION_SECRET
+        );
+
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Location': returnUrl,
+            'Set-Cookie': cookieHeader,
+          },
+        });
+      } catch (err) {
+        console.error('[GitHub Callback Error]:', err);
+        return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_server_error`, 302);
+      }
+    }
+
+    // POST /api/auth/github/direct - Direct / Simulated GitHub sign-in for dev and demo
+    if (url.pathname === '/api/auth/github/direct' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          login?: string;
+          name?: string;
+          email?: string;
+        };
+
+        const user = await getOrCreateGitHubUser(env, {
+          id: 'gh_demo_1092834',
+          login: body.login || 'visiongo-developer',
+          name: body.name || 'Industrial Vision Engineer',
+          email: body.email || 'developer@visiongo.app',
+          avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+        });
+
+        const { cookieHeader } = await createSessionCookie(
+          user.id,
+          user.githubId || user.email,
+          env.SESSION_SECRET
+        );
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              displayName: user.displayName,
+              avatarUrl: user.avatarUrl,
+              createdAt: user.createdAt,
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Set-Cookie': cookieHeader,
+            },
+          }
+        );
+      } catch (err) {
+        console.error('[GitHub Direct Error]:', err);
+        return new Response(
+          JSON.stringify({ error: 'GitHub 登录遇到错误' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
 
     // POST /api/auth/google - Verify Google ID token and establish session
     if (url.pathname === '/api/auth/google' && request.method === 'POST') {

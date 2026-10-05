@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { CheckCircle2, ArrowRight, Laptop, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AuthCard } from '../components/AuthCard';
 import { SeoHead } from '../components/SeoHead';
 
 export const DesktopAuthPage: React.FC = () => {
@@ -123,9 +123,9 @@ export const DesktopAuthPage: React.FC = () => {
           </div>
         ) : !user ? (
           <div className="space-y-4">
-            <p className="text-zinc-300 text-sm">请先登录您的 VISIONGO 账号：</p>
-            <div className="flex justify-center">
-              <GoogleSignInButton onSuccess={() => {}} />
+            <p className="text-zinc-300 text-sm">请先登录或注册您的 VISIONGO 账号：</p>
+            <div>
+              <AuthCard onSuccess={() => {}} />
             </div>
             <p className="text-xs text-zinc-500">
               登录成功后将自动返回 VisionStudio 客户端。

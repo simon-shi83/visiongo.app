@@ -70,7 +70,9 @@ export interface User {
   id: string;
   tenantId: string;
   role: 'super_admin' | 'org_admin' | 'member';
-  googleSub: string;
+  googleSub?: string;
+  githubId?: string;
+  authProvider?: 'google' | 'github' | 'email';
   email: string;
   displayName?: string;
   avatarUrl?: string;
@@ -103,6 +105,9 @@ export interface Env {
   DOWNLOADS_CACHE_TTL_SEC?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  RESEND_API_KEY?: string;
   SESSION_SECRET?: string;
   DESKTOP_TOKEN_PRIVATE_KEY?: string;
   DESKTOP_TOKEN_KEY_ID?: string;
