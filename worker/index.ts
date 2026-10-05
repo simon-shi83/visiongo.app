@@ -59,8 +59,8 @@ export default {
       return Response.redirect(redirectUrl.toString(), 301);
     }
 
-    // Redirect /index.html -> /
-    if (url.pathname === '/index.html') {
+    // Redirect /index.html -> / (skip for internal worker/SPA fetches)
+    if (url.pathname === '/index.html' && !request.headers.get('x-internal-spa')) {
       const redirectUrl = new URL(request.url);
       redirectUrl.pathname = '/';
       return Response.redirect(redirectUrl.toString(), 301);
@@ -1191,10 +1191,23 @@ export default {
       }
     }
 
-    // E. Authenticated client application routes: /my, /account
-    if (url.pathname === '/my' || url.pathname === '/account') {
-      const spaRes = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+    // E. Authenticated client application routes: /my, /account, /desktop/*
+    if (url.pathname === '/my' || url.pathname === '/account' || url.pathname.startsWith('/desktop')) {
+      let spaRes = await env.ASSETS.fetch(new Request(new URL('/my.html', request.url)));
+      if (spaRes.status !== 200) {
+        spaRes = await env.ASSETS.fetch(new Request(new URL('/account.html', request.url)));
+      }
+      if (spaRes.status !== 200) {
+        const spaReq = new Request(new URL('/index.html', request.url), {
+          headers: new Headers({
+            ...Object.fromEntries(request.headers),
+            'x-internal-spa': 'true',
+          }),
+        });
+        spaRes = await env.ASSETS.fetch(spaReq);
+      }
       const headers = new Headers(spaRes.headers);
+      headers.delete('location');
       applySecurityHeaders(headers);
       return new Response(spaRes.body, { status: 200, headers });
     }

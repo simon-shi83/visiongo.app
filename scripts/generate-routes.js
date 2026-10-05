@@ -318,6 +318,11 @@ async function generateAllRoutes() {
     fs.writeFileSync(path.join(distDir, '404.html'), notFoundHtml);
     console.log('[SEO Prerender] Wrote custom 404 page (dist/404.html)');
 
+    // Generate SPA shell for client-side authenticated routes: /my, /account
+    fs.writeFileSync(path.join(distDir, 'my.html'), baseHtml);
+    fs.writeFileSync(path.join(distDir, 'account.html'), baseHtml);
+    console.log('[SPA Prerender] Wrote client app shells: my.html, account.html');
+
   } finally {
     await vite.close();
   }
