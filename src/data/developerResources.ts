@@ -70,7 +70,7 @@ export const DEVELOPER_RESOURCES_EN: DeveloperResource[] = [
     description:
       'Stay updated with the latest performance optimizations, new industrial camera drivers, edge neural operators, and security patches.',
     icon: 'History',
-    link: '/resources#releases',
+    link: '/downloads',
     actionText: 'Read Changelog',
   },
 ];
@@ -134,7 +134,7 @@ export const DEVELOPER_RESOURCES_ZH: DeveloperResource[] = [
     description:
       '持续获取引擎底层性能升级动态、新增相机厂商驱动支持、边缘神经网络算子优化与长期支持版维护说明。',
     icon: 'History',
-    link: '/resources#releases',
+    link: '/downloads',
     actionText: '阅读发版日志',
   },
 ];

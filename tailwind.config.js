@@ -6,15 +6,14 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          'Plus Jakarta Sans',
           '-apple-system',
           'BlinkMacSystemFont',
           'Segoe UI',
-          'Roboto',
+          'Noto Sans CJK SC',
+          'Microsoft YaHei',
           'sans-serif',
         ],
         mono: [
-          'JetBrains Mono',
           'ui-monospace',
           'SFMono-Regular',
           'Menlo',

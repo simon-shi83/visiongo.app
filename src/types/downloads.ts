@@ -14,6 +14,7 @@ export interface ReleaseAsset {
   contentType: string;
   platform: PlatformType;
   arch: ArchitectureType;
+  digest?: string;
   downloadUrl: string;
 }
 

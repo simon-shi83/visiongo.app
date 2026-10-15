@@ -7,7 +7,7 @@ interface GitHubSignInButtonProps {
   className?: string;
 }
 
-export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ onSuccess, className = '' }) => {
+export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ className = '' }) => {
   const { loginWithGitHub } = useAuth();
   const { locale } = useLanguage();
   const [loading, setLoading] = useState(false);
@@ -37,12 +37,8 @@ export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ onSucces
       return;
     }
 
-    // Direct simulated sign-in for dev / demo
-    const ok = await loginWithGitHub(true);
+    await loginWithGitHub();
     setLoading(false);
-    if (ok) {
-      onSuccess?.();
-    }
   };
 
   const isConfigured = Boolean(githubClientId);
@@ -51,7 +47,7 @@ export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ onSucces
     <div className={`flex flex-col items-center gap-1.5 w-full ${className}`}>
       <button
         onClick={handleSignIn}
-        disabled={loading}
+        disabled={loading || !isConfigured}
         className="w-full max-w-[280px] py-2.5 px-4 rounded-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-mono text-zinc-300 hover:text-white flex items-center justify-center gap-2.5 transition-colors cursor-pointer shadow-sm"
       >
         <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
@@ -75,8 +71,8 @@ export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ onSucces
       {!isConfigured && (
         <p className="text-[11px] text-amber-500/80 font-mono text-center max-w-[280px]">
           {locale === 'zh'
-            ? '提示：未配置 GitHub Client ID，已启用模拟测试登录。'
-            : 'Note: GitHub Client ID not configured. Demo login active.'}
+            ? 'GitHub 登录暂不可用，请使用其他登录方式。'
+            : 'GitHub sign-in is unavailable. Please use another sign-in method.'}
         </p>
       )}
     </div>

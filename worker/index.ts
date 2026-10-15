@@ -13,9 +13,14 @@
  * - Fallback: Hardened static asset routing. Non-existent API and asset routes strictly 404.
  */
 
-import { Env, isValidProduct, SupportedProduct } from './types';
+import { Env, isValidProduct, SupportedProduct, SUPPORTED_DOWNLOAD_PRODUCTS, ProductRelease, User } from './types';
 import { GitHubReleaseProvider, GitHubDownloadProvider } from './github';
 import { recordDownloadAnalytics } from './analytics';
+import { receiveInquiry, dispatchInquiries } from './contacts';
+import { allowRequest, json } from './reliability';
+import { isPublicPath, localizedPath, stripLocalePath } from '../shared/routing';
+import { safeReturnPath, startGitHubOAuth, consumeGitHubOAuth, clearGitHubStateCookie } from './githubOAuth';
+import { effectiveRole, handleOrganizationApi, rememberTenant, resolveTenant, ResolvedTenant } from './organizations';
 import {
   verifyGoogleIdToken,
   createSessionCookie,
@@ -40,9 +45,52 @@ import {
   getOrCreateGitHubUser,
 } from './auth';
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+// Desktop sign-in endpoints of SDK/schemas/identity.json plus the legacy page flow.
+const DESKTOP_TOKEN_PATHS = new Set(['/api/auth/token', '/api/auth/refresh', '/api/auth/switch-tenant']);
+const DESKTOP_HEADERS = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
+
+/** SDK IdentityErrorResponse. */
+function desktopError(status: number, error: string, description: string): Response {
+  return new Response(JSON.stringify({ error, error_description: description }), { status, headers: DESKTOP_HEADERS });
+}
+
+/** SDK IdentityTokenResponse for the resolved organization. */
+async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTenant,
+                                    options: { refresh: boolean; remember: boolean }): Promise<Response> {
+  const token = await createDesktopAccessToken(env, user, resolved.tenant);
+  const body: Record<string, unknown> = {
+    access_token: token.accessToken,
+    token_type: 'Bearer',
+    expires_in: token.expiresIn,
+    tenant_id: token.tenantId,
+  };
+  if (options.refresh) {
+    body.refresh_token = await createDesktopRefreshToken(user, env.SESSION_SECRET, resolved.tenant.tenant_id);
+  }
+  if (options.remember) await rememberTenant(env, user.id, resolved.tenant.tenant_id);
+  Object.assign(body, {
+    user_id: user.id,
+    username: user.displayName || user.email.split('@')[0],
+    email: user.email,
+    role: effectiveRole(user, resolved.tenant),
+    tenant_name: resolved.tenant.name,
+    tenant_type: resolved.tenant.type,
+    tenants: resolved.tenants,
+  });
+  return new Response(JSON.stringify(body), { status: 200, headers: DESKTOP_HEADERS });
+}
+
+async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Browser writes must originate from this site; desktop token contracts are unchanged.
+    if (request.method === 'POST' && (url.pathname === '/api/contact' || url.pathname.startsWith('/api/auth/email/')
+        || url.pathname === '/api/orgs' || url.pathname.startsWith('/api/orgs/'))) {
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return json({ error: 'Invalid request origin.' }, 403);
+      const address = request.headers.get('CF-Connecting-IP');
+      if (address && !await allowRequest(env, 'website-write', address, 30, 600)) return json({ error: 'Too many requests. Please retry later.' }, 429);
+    }
 
     // =========================================================================
     // Canonical Host, Protocol, and URL Normalization (301 Permanent Redirect)
@@ -113,21 +161,19 @@ export default {
         const segments = url.pathname.split('/').filter(Boolean);
         // /api/releases -> segments = ['api', 'releases']
         if (segments.length === 2) {
-          const allReleases = await releaseProvider.getAllReleases(includePrereleases);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              releases: allReleases,
-              updatedAt: new Date().toISOString(),
-            }),
-            {
-              status: 200,
-              headers: {
-                'Content-Type': 'application/json',
-                'Cache-Control': 'public, max-age=300, s-maxage=600',
-              },
-            }
-          );
+          const results = await Promise.allSettled(SUPPORTED_DOWNLOAD_PRODUCTS.map(product => releaseProvider.getProductReleases(product, includePrereleases)));
+          const releases = {} as Record<SupportedProduct, ProductRelease[]>;
+          const errors: Partial<Record<SupportedProduct, string>> = {};
+          results.forEach((result, index) => {
+            const product = SUPPORTED_DOWNLOAD_PRODUCTS[index];
+            releases[product] = result.status === 'fulfilled' ? result.value : [];
+            if (result.status === 'rejected') errors[product] = 'Release service unavailable. Please retry.';
+          });
+          const failed = Object.keys(errors).length;
+          return Response.json({ success: failed < results.length, releases, errors, updatedAt: new Date().toISOString() }, {
+            status: failed === results.length ? 503 : 200,
+            headers: { 'Cache-Control': failed ? 'no-store' : 'public, max-age=300, s-maxage=600' },
+          });
         }
 
         // /api/releases/:product -> segments = ['api', 'releases', ':product']
@@ -232,7 +278,7 @@ export default {
           env,
           session.userId,
           productParam as SupportedProduct,
-          result.version || 'v1.0.0',
+          result.version || 'unknown',
           result.filename
         );
         if (ctx && typeof ctx.waitUntil === 'function') {
@@ -246,7 +292,7 @@ export default {
         request,
         {
           product: productParam as SupportedProduct,
-          version: result.version || 'v1.0.0',
+          version: result.version || 'unknown',
           assetName: result.filename,
           platform: result.platform,
           arch: result.arch,
@@ -259,7 +305,9 @@ export default {
 
       // Stream the binary asset directly to the client with sanitized headers
       const downloadHeaders = new Headers();
-      downloadHeaders.set('Content-Disposition', `attachment; filename="${result.filename}"`);
+      const safeFilename = result.filename.replace(/[\x00-\x1f\x7f"\\]/g, '_').replace(/[^\x20-\x7e]/g, '_');
+      const encodedFilename = encodeURIComponent(result.filename).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+      downloadHeaders.set('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
       downloadHeaders.set('Content-Type', result.contentType || 'application/octet-stream');
       if (result.size) {
         downloadHeaders.set('Content-Length', String(result.size));
@@ -277,66 +325,7 @@ export default {
     // 4. Contact & Enterprise Inquiry API: POST /api/contact
     // =========================================================================
     if (url.pathname === '/api/contact' && request.method === 'POST') {
-      try {
-        const body = (await request.json()) as {
-          name?: string;
-          email?: string;
-          company?: string;
-          country?: string;
-          product?: string;
-          message?: string;
-          projectScope?: string;
-          websiteUrl?: string; // Honeypot field
-        };
-
-        // If honeypot is populated, silently acknowledge without processing
-        if (body.websiteUrl) {
-          return new Response(
-            JSON.stringify({ success: true, referenceId: `VG-${Date.now().toString(36).toUpperCase()}` }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const email = (body.email || '').trim();
-        const content = (body.message || body.projectScope || '').trim();
-
-        if (!email || !content) {
-          return new Response(
-            JSON.stringify({ error: 'Work email and project details are required.' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-          return new Response(
-            JSON.stringify({ error: 'Please enter a valid work email address.' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const referenceId = `VG-${Date.now().toString(36).toUpperCase()}`;
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Inquiry received. A VISIONGO systems architect will follow up within 24 hours.',
-            referenceId,
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-            },
-          }
-        );
-      } catch (err) {
-        return new Response(
-          JSON.stringify({ error: 'Invalid JSON payload' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
+      return receiveInquiry(request, env, ctx);
     }
 
     // =========================================================================
@@ -375,6 +364,7 @@ export default {
           );
         }
 
+        if (!await allowRequest(env, 'email-code', email, 1, 60)) return json({ error: '请稍后再申请验证码' }, 429);
         if (purpose === 'register') {
           const existing = await getUserByEmail(env, email);
           if (existing) {
@@ -387,13 +377,16 @@ export default {
 
         const code = generateVerificationCode();
         await saveVerificationCode(env, email, code, purpose);
-        await sendVerificationEmail(env, email, code);
+        const delivered = await sendVerificationEmail(env, email, code);
+        if (!delivered.success) {
+          await env.DB!.prepare('DELETE FROM email_verification_codes WHERE email = ? AND code = ?').bind(email, code).run();
+          return json({ error: '验证码发送失败，请稍后重试' }, 503);
+        }
 
         return new Response(
           JSON.stringify({
             success: true,
             message: '验证码已发送至您的邮箱，10分钟内有效',
-            devCode: !env.RESEND_API_KEY ? code : undefined,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
@@ -435,6 +428,7 @@ export default {
           );
         }
 
+        if (!await allowRequest(env, 'email-register', email, 10, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
         const isCodeValid = await verifyAndConsumeCode(env, email, code, 'register');
         if (!isCodeValid) {
           return new Response(
@@ -500,6 +494,7 @@ export default {
           );
         }
 
+        if (!await allowRequest(env, 'email-login', email, 10, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
         const loginResult = await loginUserWithEmail(env, email, password);
         if (loginResult.error || !loginResult.user) {
           return new Response(
@@ -543,163 +538,61 @@ export default {
       }
     }
 
-    // GET /api/auth/github - Start GitHub OAuth flow
+    // Browser-bound, expiring, one-use GitHub OAuth state with PKCE.
     if (url.pathname === '/api/auth/github' && request.method === 'GET') {
-      const returnUrl = url.searchParams.get('returnUrl') || '/account';
-      if (!env.GITHUB_CLIENT_ID) {
-        return Response.redirect(`${url.origin}${returnUrl}?auth_notice=github_not_configured`, 302);
+      const returnPath = safeReturnPath(url.searchParams.get('returnUrl'));
+      if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET || !env.DB || !env.SESSION_SECRET) {
+        const redirect = new URL(returnPath, url.origin);
+        redirect.searchParams.set('auth_notice', 'github_not_configured');
+        return Response.redirect(redirect.toString(), 302);
       }
-      const state = btoa(JSON.stringify({ returnUrl, t: Date.now() }));
-      const redirectUri = `${url.origin}/api/auth/github/callback`;
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
-        env.GITHUB_CLIENT_ID
-      )}&scope=user:email&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
-      return Response.redirect(githubAuthUrl, 302);
+      const flow = await startGitHubOAuth(env, returnPath);
+      const authorize = new URL('https://github.com/login/oauth/authorize');
+      authorize.search = new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, scope: 'user:email',
+        redirect_uri: `${url.origin}/api/auth/github/callback`, state: flow.state,
+        code_challenge: flow.challenge, code_challenge_method: 'S256' }).toString();
+      return new Response(null, { status: 302, headers: { Location: authorize.toString(), 'Set-Cookie': flow.cookie, 'Cache-Control': 'no-store' } });
     }
 
-    // GET /api/auth/github/callback - GitHub OAuth callback handler
     if (url.pathname === '/api/auth/github/callback' && request.method === 'GET') {
-      const code = url.searchParams.get('code');
-      const state = url.searchParams.get('state');
-      let returnUrl = '/account';
-      if (state) {
-        try {
-          const parsed = JSON.parse(atob(state));
-          if (parsed.returnUrl) returnUrl = parsed.returnUrl;
-        } catch {
-          // Ignore state decoding error
-        }
-      }
-
-      if (!code) {
-        return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_cancelled`, 302);
-      }
-
+      const redirect = (path: string, error?: string, sessionCookie?: string) => {
+        const destination = new URL(safeReturnPath(path), url.origin);
+        if (error) destination.searchParams.set('auth_error', error);
+        const headers = new Headers({ Location: destination.toString(), 'Cache-Control': 'no-store' });
+        headers.append('Set-Cookie', clearGitHubStateCookie);
+        if (sessionCookie) headers.append('Set-Cookie', sessionCookie);
+        return new Response(null, { status: 302, headers });
+      };
+      let returnPath = '/my';
       try {
+        const flow = await consumeGitHubOAuth(env, url.searchParams.get('state'), request.headers.get('Cookie'));
+        if (!flow) return redirect('/my', 'github_invalid_state');
+        returnPath = flow.return_path;
+        const code = url.searchParams.get('code');
+        if (!code) return redirect(returnPath, 'github_cancelled');
         const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            client_id: env.GITHUB_CLIENT_ID,
-            client_secret: env.GITHUB_CLIENT_SECRET,
-            code,
-          }),
+          method: 'POST', signal: AbortSignal.timeout(10000),
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET,
+            redirect_uri: `${url.origin}/api/auth/github/callback`, code_verifier: flow.code_verifier, code }),
         });
-
-        const tokenData = (await tokenRes.json()) as { access_token?: string; error?: string };
-        if (!tokenData.access_token) {
-          return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_token_failed`, 302);
-        }
-
-        const userRes = await fetch('https://api.github.com/user', {
-          headers: {
-            'Authorization': `Bearer ${tokenData.access_token}`,
-            'User-Agent': 'VISIONGO-Website-Auth',
-            'Accept': 'application/json',
-          },
-        });
-        const ghUser = (await userRes.json()) as {
-          id: number;
-          login: string;
-          name?: string;
-          email?: string;
-          avatar_url?: string;
-        };
-
-        let email = ghUser.email;
-        if (!email) {
-          const emailsRes = await fetch('https://api.github.com/user/emails', {
-            headers: {
-              'Authorization': `Bearer ${tokenData.access_token}`,
-              'User-Agent': 'VISIONGO-Website-Auth',
-              'Accept': 'application/json',
-            },
-          });
-          if (emailsRes.ok) {
-            const emails = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
-            const primary = emails.find(e => e.primary && e.verified) || emails[0];
-            if (primary) email = primary.email;
-          }
-        }
-
-        const user = await getOrCreateGitHubUser(env, {
-          id: ghUser.id,
-          login: ghUser.login,
-          name: ghUser.name,
-          email: email || `${ghUser.login}@users.noreply.github.com`,
-          avatar_url: ghUser.avatar_url,
-        });
-
-        const { cookieHeader } = await createSessionCookie(
-          user.id,
-          user.githubId || user.email,
-          env.SESSION_SECRET
-        );
-
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'Location': returnUrl,
-            'Set-Cookie': cookieHeader,
-          },
-        });
-      } catch (err) {
-        console.error('[GitHub Callback Error]:', err);
-        return Response.redirect(`${url.origin}${returnUrl}?auth_error=github_server_error`, 302);
-      }
-    }
-
-    // POST /api/auth/github/direct - Direct / Simulated GitHub sign-in for dev and demo
-    if (url.pathname === '/api/auth/github/direct' && request.method === 'POST') {
-      try {
-        const body = (await request.json().catch(() => ({}))) as {
-          login?: string;
-          name?: string;
-          email?: string;
-        };
-
-        const user = await getOrCreateGitHubUser(env, {
-          id: 'gh_demo_1092834',
-          login: body.login || 'visiongo-developer',
-          name: body.name || 'Industrial Vision Engineer',
-          email: body.email || 'developer@visiongo.app',
-          avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-        });
-
-        const { cookieHeader } = await createSessionCookie(
-          user.id,
-          user.githubId || user.email,
-          env.SESSION_SECRET
-        );
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            user: {
-              id: user.id,
-              email: user.email,
-              displayName: user.displayName,
-              avatarUrl: user.avatarUrl,
-              createdAt: user.createdAt,
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Set-Cookie': cookieHeader,
-            },
-          }
-        );
-      } catch (err) {
-        console.error('[GitHub Direct Error]:', err);
-        return new Response(
-          JSON.stringify({ error: 'GitHub 登录遇到错误' }),
-          { status: 500, headers: { 'Content-Type': 'application/json' } }
-        );
+        const token = await tokenRes.json() as { access_token?: string };
+        if (!tokenRes.ok || !token.access_token) return redirect(returnPath, 'github_token_failed');
+        const headers = { Authorization: `Bearer ${token.access_token}`, 'User-Agent': 'VISIONGO-Website-Auth', Accept: 'application/json' };
+        const userRes = await fetch('https://api.github.com/user', { headers, signal: AbortSignal.timeout(10000) });
+        const profile = await userRes.json() as { id: number; login: string; name?: string; avatar_url?: string };
+        if (!userRes.ok || !profile.id || !profile.login) return redirect(returnPath, 'github_profile_failed');
+        const emailsRes = await fetch('https://api.github.com/user/emails', { headers, signal: AbortSignal.timeout(10000) });
+        if (!emailsRes.ok) return redirect(returnPath, 'github_email_failed');
+        const emails = await emailsRes.json() as Array<{ email: string; primary: boolean; verified: boolean }>;
+        const email = emails.find(item => item.primary && item.verified) || emails.find(item => item.verified);
+        if (!email) return redirect(returnPath, 'github_email_failed');
+        const user = await getOrCreateGitHubUser(env, { ...profile, email: email.email });
+        const session = await createSessionCookie(user.id, user.githubId || user.email, env.SESSION_SECRET);
+        return redirect(returnPath, undefined, session.cookieHeader);
+      } catch {
+        console.error('[GitHub] OAuth callback failed');
+        return redirect(returnPath, 'github_server_error');
       }
     }
 
@@ -728,7 +621,7 @@ export default {
         // Create secure signed session cookie
         const { cookieHeader } = await createSessionCookie(
           user.id,
-          user.googleSub,
+          user.googleSub!,
           env.SESSION_SECRET
         );
 
@@ -797,8 +690,8 @@ export default {
       );
     }
 
-    // OPTIONS for public auth endpoints (Desktop client / Studio)
-    if ((url.pathname === '/api/auth/token' || url.pathname === '/api/auth/refresh') && request.method === 'OPTIONS') {
+    // OPTIONS for public desktop auth endpoints (VisionStudio)
+    if (DESKTOP_TOKEN_PATHS.has(url.pathname) && request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
@@ -810,8 +703,9 @@ export default {
       });
     }
 
-    // POST /api/auth/desktop-code - Mint a 5-minute single-use authorization code for PKCE flow.
-    // Authentication comes from the HttpOnly website session cookie.
+    // POST /api/auth/desktop-code - Mint a 5-minute authorization code for the PKCE flow.
+    // Authentication comes from the HttpOnly website session cookie. An optional
+    // tenant_id selects the organization the desktop session acts in.
     if (url.pathname === '/api/auth/desktop-code' && request.method === 'POST') {
       const cookieHeader = request.headers.get('Cookie');
       const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
@@ -832,6 +726,7 @@ export default {
         const body = (await request.json().catch(() => ({}))) as {
           code_challenge?: string;
           code_challenge_method?: string;
+          tenant_id?: string;
         };
         if (!body.code_challenge) {
           return new Response(JSON.stringify({ error: 'code_challenge is required' }), {
@@ -839,8 +734,19 @@ export default {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
           });
         }
+        let tenantId: string | undefined;
+        if (body.tenant_id) {
+          const resolved = await resolveTenant(env, user, body.tenant_id);
+          if (!resolved) {
+            return new Response(JSON.stringify({ error: 'You are not an active member of this organization' }), {
+              status: 403,
+              headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            });
+          }
+          tenantId = resolved.tenant.tenant_id;
+        }
         const method = body.code_challenge_method === 'plain' ? 'plain' : 'S256';
-        const code = await createDesktopAuthCode(user, body.code_challenge, method, env.SESSION_SECRET);
+        const code = await createDesktopAuthCode(user, body.code_challenge, method, env.SESSION_SECRET, tenantId);
         return new Response(
           JSON.stringify({
             code,
@@ -860,160 +766,109 @@ export default {
       }
     }
 
-    // POST /api/auth/token - Exchange authorization code + code_verifier for Access & Refresh tokens.
+    // POST /api/auth/token - Exchange authorization code + code_verifier (SDK identity Token).
     if (url.pathname === '/api/auth/token' && request.method === 'POST') {
       try {
         const body = (await request.json().catch(() => ({}))) as {
           grant_type?: string;
           code?: string;
           code_verifier?: string;
+          tenant_id?: string;
         };
         if (body.grant_type !== 'authorization_code' || !body.code || !body.code_verifier) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_request', error_description: 'grant_type=authorization_code, code, and code_verifier are required' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(400, 'invalid_request', 'grant_type=authorization_code, code, and code_verifier are required');
         }
 
         const authCode = await verifyDesktopAuthCode(body.code, env.SESSION_SECRET);
         if (!authCode) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_grant', error_description: 'Authorization code is invalid or expired' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(400, 'invalid_grant', 'Authorization code is invalid or expired');
         }
 
         const isPkceValid = await verifyPkceChallenge(body.code_verifier, authCode.codeChallenge, authCode.codeChallengeMethod);
         if (!isPkceValid) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE code_verifier verification failed' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(400, 'invalid_grant', 'PKCE code_verifier verification failed');
         }
 
         const user = await getUserById(env, authCode.userId);
         if (!user) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_grant', error_description: 'User not found' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(400, 'invalid_grant', 'User not found');
         }
 
-        const token = await createDesktopAccessToken(env, user);
-        const refreshToken = await createDesktopRefreshToken(user, env.SESSION_SECRET);
-
-        return new Response(
-          JSON.stringify({
-            access_token: token.accessToken,
-            token_type: 'Bearer',
-            expires_in: token.expiresIn,
-            refresh_token: refreshToken,
-            tenant_id: token.tenantId,
-            user_id: user.id,
-            username: user.displayName || user.email.split('@')[0],
-            email: user.email,
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Cache-Control': 'no-store',
-            },
-          }
-        );
+        // The organization chosen on the authorization page wins over the client's preference.
+        const resolved = await resolveTenant(env, user, authCode.tenantId || body.tenant_id);
+        if (!resolved) {
+          return desktopError(403, 'invalid_tenant', 'The user is not an active member of the requested organization');
+        }
+        return await desktopTokenResponse(env, user, resolved, { refresh: true, remember: true });
       } catch (err) {
         console.error('[Token Exchange Error]:', err);
-        return new Response(
-          JSON.stringify({ error: 'server_error', error_description: 'Failed to exchange authorization code' }),
-          {
-            status: 500,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-          }
-        );
+        return desktopError(500, 'server_error', 'Failed to exchange authorization code');
       }
     }
 
-    // POST /api/auth/refresh - Refresh desktop access token using refresh_token.
+    // POST /api/auth/refresh - New access token for the organization the refresh token is bound to.
+    // Membership is checked again, so a removed member stops receiving tokens.
     if (url.pathname === '/api/auth/refresh' && request.method === 'POST') {
       try {
         const body = (await request.json().catch(() => ({}))) as {
           refresh_token?: string;
         };
         if (!body.refresh_token) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_request', error_description: 'refresh_token is required' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(400, 'invalid_request', 'refresh_token is required');
         }
 
         const refreshPayload = await verifyDesktopRefreshToken(body.refresh_token, env.SESSION_SECRET);
         if (!refreshPayload) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token is invalid or expired' }),
-            {
-              status: 401,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(401, 'invalid_grant', 'Refresh token is invalid or expired');
         }
 
         const user = await getUserById(env, refreshPayload.userId);
         if (!user) {
-          return new Response(
-            JSON.stringify({ error: 'invalid_grant', error_description: 'User not found' }),
-            {
-              status: 401,
-              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-            }
-          );
+          return desktopError(401, 'invalid_grant', 'User not found');
         }
 
-        const token = await createDesktopAccessToken(env, user);
-        return new Response(
-          JSON.stringify({
-            access_token: token.accessToken,
-            token_type: 'Bearer',
-            expires_in: token.expiresIn,
-            tenant_id: token.tenantId,
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Cache-Control': 'no-store',
-            },
-          }
-        );
+        // Refresh tokens issued before organizations are bound to the personal organization.
+        const resolved = await resolveTenant(env, user, refreshPayload.tenantId || user.tenantId);
+        if (!resolved) {
+          return desktopError(403, 'tenant_access_revoked', 'The user is no longer an active member of this organization');
+        }
+        return await desktopTokenResponse(env, user, resolved, { refresh: false, remember: false });
       } catch (err) {
         console.error('[Token Refresh Error]:', err);
-        return new Response(
-          JSON.stringify({ error: 'server_error', error_description: 'Failed to refresh token' }),
-          {
-            status: 500,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
-          }
-        );
+        return desktopError(500, 'server_error', 'Failed to refresh token');
       }
     }
 
-    // POST /api/auth/desktop-token - Mint a short-lived Cloud access token.
+    // POST /api/auth/switch-tenant - Rebind the desktop session to another organization.
+    if (url.pathname === '/api/auth/switch-tenant' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          refresh_token?: string;
+          tenant_id?: string;
+        };
+        if (!body.refresh_token || !body.tenant_id) {
+          return desktopError(400, 'invalid_request', 'refresh_token and tenant_id are required');
+        }
+        const refreshPayload = await verifyDesktopRefreshToken(body.refresh_token, env.SESSION_SECRET);
+        if (!refreshPayload) {
+          return desktopError(401, 'invalid_grant', 'Refresh token is invalid or expired');
+        }
+        const user = await getUserById(env, refreshPayload.userId);
+        if (!user) {
+          return desktopError(401, 'invalid_grant', 'User not found');
+        }
+        const resolved = await resolveTenant(env, user, body.tenant_id);
+        if (!resolved) {
+          return desktopError(403, 'invalid_tenant', 'The user is not an active member of the requested organization');
+        }
+        return await desktopTokenResponse(env, user, resolved, { refresh: true, remember: true });
+      } catch (err) {
+        console.error('[Switch Tenant Error]:', err);
+        return desktopError(500, 'server_error', 'Failed to switch organization');
+      }
+    }
+
+    // POST /api/auth/desktop-token - Mint a short-lived Cloud access token (legacy page flow).
     // Authentication comes exclusively from the HttpOnly website session cookie.
     if (url.pathname === '/api/auth/desktop-token' && request.method === 'POST') {
       const cookieHeader = request.headers.get('Cookie');
@@ -1032,7 +887,9 @@ export default {
         });
       }
       try {
-        const token = await createDesktopAccessToken(env, user);
+        const resolved = await resolveTenant(env, user);
+        if (!resolved) throw new Error('No active organization');
+        const token = await createDesktopAccessToken(env, user, resolved.tenant);
         return new Response(JSON.stringify({
           access_token: token.accessToken,
           token_type: 'Bearer',
@@ -1062,6 +919,10 @@ export default {
         },
       });
     }
+
+    // Organizations and members for the account page (session cookie).
+    const organizationResponse = await handleOrganizationApi(request, env, url);
+    if (organizationResponse) return organizationResponse;
 
     // GET /api/user/downloads - Retrieve authenticated user's download history
     if (url.pathname === '/api/user/downloads' && request.method === 'GET') {
@@ -1143,72 +1004,32 @@ export default {
       }
     };
 
-    // C. Root route: /
-    if (url.pathname === '/') {
-      let homeRes = await env.ASSETS.fetch(new Request(new URL('/home.html', request.url)));
-      if (homeRes.status !== 200) {
-        homeRes = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url)));
+    // Public routes and download deep links share the same route registry as SSR.
+    if (isPublicPath(url.pathname)) {
+      if (url.searchParams.get('lang') === 'zh') {
+        return Response.redirect(new URL(localizedPath(`${url.pathname}${url.search}`, 'zh'), url.origin).toString(), 301);
       }
-      if (homeRes.status !== 200) {
-        homeRes = await env.ASSETS.fetch(new Request(new URL('/', request.url)));
-      }
-      const headers = new Headers(homeRes.headers);
-      headers.delete('location'); // Strip any redirect location header
+      const locale = url.pathname === '/zh' || url.pathname.startsWith('/zh/') ? 'zh' : 'en';
+      const plain = stripLocalePath(url.pathname);
+      const snapshot = localizedPath(plain.startsWith('/downloads/') ? '/downloads' : plain, locale);
+      const assetPath = snapshot === '/' ? '/home.html' : `${snapshot}.html`;
+      const response = await env.ASSETS.fetch(new Request(new URL(assetPath, request.url)));
+      if (response.status !== 200) return json({ error: 'Page snapshot unavailable.' }, 503);
+      const headers = new Headers(response.headers);
+      headers.delete('location');
       applySecurityHeaders(headers);
-      return new Response(homeRes.body, { status: 200, headers });
-    }
-
-    // D. Known public routes: Return corresponding pre-rendered HTML snapshot with status 200
-    const knownDirectRoutes = [
-      '/products/visionstudio',
-      '/products/visionruntime',
-      '/products/visionedge',
-      '/products/visioncloud',
-      '/solutions',
-      '/developers',
-      '/downloads',
-      '/resources',
-      '/about',
-      '/contact',
-      '/privacy',
-      '/terms',
-    ];
-
-    if (knownDirectRoutes.includes(url.pathname)) {
-      // Try fetching ${url.pathname}.html or ${url.pathname}/index.html from dist
-      let snapshotRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}.html`, request.url)));
-      if (snapshotRes.status !== 200) {
-        snapshotRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}/index.html`, request.url)));
-      }
-      if (snapshotRes.status !== 200) {
-        snapshotRes = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url)));
-      }
-
-      if (snapshotRes.status === 200) {
-        const headers = new Headers(snapshotRes.headers);
-        applySecurityHeaders(headers);
-        return new Response(snapshotRes.body, { status: 200, headers });
-      }
+      return new Response(response.body, { status: 200, headers });
     }
 
     // E. Authenticated client application routes: /my, /account, /desktop/*
-    if (url.pathname === '/my' || url.pathname === '/account' || url.pathname.startsWith('/desktop')) {
-      let spaRes = await env.ASSETS.fetch(new Request(new URL('/my.html', request.url)));
-      if (spaRes.status !== 200) {
-        spaRes = await env.ASSETS.fetch(new Request(new URL('/account.html', request.url)));
-      }
-      if (spaRes.status !== 200) {
-        const spaReq = new Request(new URL('/index.html', request.url), {
-          headers: new Headers({
-            ...Object.fromEntries(request.headers),
-            'x-internal-spa': 'true',
-          }),
-        });
-        spaRes = await env.ASSETS.fetch(spaReq);
-      }
+    if (url.pathname === '/my' || url.pathname === '/account' || url.pathname === '/auth/desktop') {
+      const spaRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}.html`, request.url)));
+      if (spaRes.status !== 200) return json({ error: 'Account page unavailable.' }, 503);
       const headers = new Headers(spaRes.headers);
       headers.delete('location');
       applySecurityHeaders(headers);
+      headers.set('Cache-Control', 'no-store');
+      headers.set('X-Robots-Tag', 'noindex, follow');
       return new Response(spaRes.body, { status: 200, headers });
     }
 
@@ -1223,5 +1044,22 @@ export default {
       statusText: 'Not Found',
       headers: notFoundHeaders,
     });
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    try { return await handleRequest(request, env, ctx); }
+    catch { console.error('[Worker] Request failed'); return json({ error: 'Service temporarily unavailable. Please retry.' }, 503); }
+  },
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (!env.DB) return;
+    ctx.waitUntil((async () => {
+      await env.DB!.batch([
+        env.DB!.prepare('DELETE FROM github_oauth_states WHERE expires_at <= ?').bind(Date.now()),
+        env.DB!.prepare('DELETE FROM request_limits WHERE expires_at <= ?').bind(Date.now()),
+        env.DB!.prepare('DELETE FROM email_verification_codes WHERE expires_at <= ?').bind(Date.now()),
+      ]);
+      await dispatchInquiries(env);
+    })());
   },
 };

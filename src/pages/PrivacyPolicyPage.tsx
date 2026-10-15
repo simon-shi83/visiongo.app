@@ -1,3 +1,4 @@
+import { SiteLink } from '../components/SiteLink';
 import React from 'react';
 import { Shield, Lock, Eye, Server, Mail } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
@@ -111,6 +112,7 @@ export const PrivacyPolicyPage: React.FC = () => {
             </ul>
           </div>
 
+          <div className="space-y-3"><h3 className="text-lg font-semibold text-white">{locale === 'zh' ? 'GitHub 与邮箱账户' : 'GitHub and email accounts'}</h3><p>{locale === 'zh' ? 'GitHub 登录保存提供方身份编号、已验证邮箱及基本资料。邮箱注册保存邮箱、显示名称及加盐密码哈希，不保存明文密码。邮件验证码通过 Resend 发送，验证码短期保存并在验证后删除。' : 'GitHub sign-in stores the provider identity, verified email and basic profile. Email registration stores email, display name and a salted password hash, not a plaintext password. Resend delivers verification emails; codes are stored briefly and consumed on verification.'}</p><p>{locale === 'zh' ? '为限制滥用，服务使用带密钥的摘要统计短期请求次数，不在限流记录中保存原始 IP 或邮箱。' : 'Abuse limits use keyed digests to count short-lived requests, without storing raw IPs or email addresses in rate-limit records.'}</p></div>
           {/* Section 4: Contact Form */}
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-white flex items-center gap-2 font-mono">
@@ -119,8 +121,8 @@ export const PrivacyPolicyPage: React.FC = () => {
             </h3>
             <p>
               {locale === 'zh'
-                ? '当您主动通过 /contact 提交技术咨询或 PoC 评估时，所填写的姓名、工作邮箱、公司名称与项目规格参数仅用于 VISIONGO 系统架构师与您建立直接工程联系，绝不会向任何第三方转售或用于广告推销。'
-                : 'When submitting inquiries or demo requests via /contact, your contact information is used exclusively by our systems engineers to evaluate your technical parameters and respond to your inquiry. We never share or sell this data.'}
+                ? '当您主动通过 /contact 提交技术咨询或 PoC 评估时，所填写的姓名、工作邮箱、公司名称与项目规格参数仅用于 VISIONGO 系统架构师与您建立直接工程联系，咨询记录存储于 Cloudflare D1；配置后的邮件通知由 Resend 处理。我们不转售咨询数据。'
+                : 'When submitting inquiries or demo requests via /contact, your contact information is used exclusively by our systems engineers to evaluate your technical parameters and respond to your inquiry. Inquiries are stored in Cloudflare D1; configured email notifications are processed by Resend. We do not sell inquiry data.'}
             </p>
           </div>
 
@@ -132,11 +134,11 @@ export const PrivacyPolicyPage: React.FC = () => {
             </h3>
             <p>
               {locale === 'zh'
-                ? '我们不使用任何第三方跨站追踪或广告营销 Cookie。我们仅在您登录后使用一个名为 `vg_session` 的严格安全 Cookie：'
-                : 'We do not use advertising or tracking cookies. We utilize a single first-party cookie strictly for session authentication:'}
+                ? '我们不使用任何第三方跨站追踪或广告营销 Cookie。我们使用第一方 Cookie 维护登录会话，并使用短期 Cookie 校验 GitHub OAuth 登录状态：'
+                : 'We do not use advertising or tracking cookies. We use first-party cookies for sessions and short-lived GitHub OAuth state validation:'}
             </p>
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 font-mono text-xs text-zinc-400">
-              <code>vg_session: HttpOnly; Secure; SameSite=Lax; Max-Age=30 days</code>
+              <code>vg_session: HttpOnly; Secure; SameSite=Lax; Max-Age=30 days; GitHub state: 10 minutes</code>
             </div>
           </div>
 
@@ -147,13 +149,13 @@ export const PrivacyPolicyPage: React.FC = () => {
             </h4>
             <p className="text-xs text-zinc-400">
               {locale === 'zh'
-                ? '如果您希望查询、更新或彻底删除您在 VISIONGO 的账号及下载记录，请随时通过以下邮箱联系技术团队：'
-                : 'To request access, export, or deletion of your account records or download history, please reach out to our engineering team:'}
+                ? '如果您希望查询、更新或彻底删除您在 VISIONGO 的账号、咨询及下载记录，请随时通过以下邮箱联系技术团队：'
+                : 'To request access, export, or deletion of your account, inquiry or download records, please reach out to our engineering team:'}
             </p>
             <div className="pt-2 text-xs font-mono text-emerald-400">
-              <a href="mailto:contact@visiongo.app" className="hover:underline">
+              <SiteLink href="mailto:contact@visiongo.app" className="hover:underline">
                 contact@visiongo.app
-              </a>
+              </SiteLink>
             </div>
           </div>
         </div>

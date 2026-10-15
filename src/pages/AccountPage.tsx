@@ -6,10 +6,12 @@ import {
   LogOut,
   ArrowRight,
   Package,
+  Building2,
 } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
 import { AuthCard } from '../components/AuthCard';
+import { OrganizationPanel } from '../components/OrganizationPanel';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -30,9 +32,11 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const { user, loading: authLoading, logout } = useAuth();
   const { locale } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'downloads' | 'history'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'downloads' | 'history' | 'organizations'>('profile');
   const [downloadHistory, setDownloadHistory] = useState<UserDownloadRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const authParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+  const authNotice = authParams.has('auth_error') || authParams.has('auth_notice');
 
   useEffect(() => {
     if (user) {
@@ -61,6 +65,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-28 pb-24">
       <SeoHead
+        noindex
         title={locale === 'zh' ? '我的 VISIONGO — 账户与发版记录' : 'My VISIONGO — Account & Downloads'}
         description={
           locale === 'zh'
@@ -81,6 +86,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
           }
         />
 
+        {authNotice && !user && <p role="alert" className="mb-6 rounded-xl border border-amber-500/30 p-4 text-sm text-amber-300">{locale === 'zh' ? '第三方登录未完成或暂不可用。请重新登录，或选择其他可用的登录方式。' : 'Third-party sign-in did not complete or is unavailable. Please retry or choose another available sign-in method.'}</p>}
         {authLoading ? (
           <div className="py-20 flex justify-center items-center">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500" />
@@ -193,7 +199,21 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                   {downloadHistory.length})
                 </span>
               </button>
+
+              <button
+                onClick={() => setActiveTab('organizations')}
+                className={`px-4 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-2 ${
+                  activeTab === 'organizations'
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+                <span>{locale === 'zh' ? '组织' : 'Organizations'}</span>
+              </button>
             </div>
+
+            {activeTab === 'organizations' && <OrganizationPanel locale={locale} />}
 
             {/* Tab 1: Profile Details */}
             {activeTab === 'profile' && (

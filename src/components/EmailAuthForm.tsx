@@ -24,7 +24,6 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
   const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [devCodeHint, setDevCodeHint] = useState<string | null>(null);
 
   // 60-second countdown for code resend
   useEffect(() => {
@@ -37,7 +36,6 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
   const handleSendCode = async () => {
     setError(null);
     setSuccessMsg(null);
-    setDevCodeHint(null);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email || !emailRegex.test(email.trim())) {
@@ -52,10 +50,7 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
     if (res.success) {
       setCountdown(60);
       setSuccessMsg(locale === 'zh' ? '验证码已发送，请查收邮箱' : 'Verification code sent to your email');
-      if (res.devCode) {
-        setDevCodeHint(res.devCode);
-        setCode(res.devCode); // Auto-fill in dev mode for convenience
-      }
+
     } else {
       setError(res.error || (locale === 'zh' ? '验证码发送失败' : 'Failed to send code'));
     }
@@ -199,11 +194,7 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
                   : (locale === 'zh' ? '获取验证码' : 'Send Code')}
               </button>
             </div>
-            {devCodeHint && (
-              <p className="text-[10px] text-emerald-400 font-mono mt-1">
-                {locale === 'zh' ? `测试模式验证码：${devCodeHint}` : `Dev verification code: ${devCodeHint}`}
-              </p>
-            )}
+
           </div>
         )}
 

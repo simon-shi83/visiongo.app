@@ -9,7 +9,8 @@
  * - Anonymous downloads remain 100% accessible without authentication.
  */
 
-import { Env, User, UserDownloadRecord, SupportedProduct } from './types';
+import { Env, TenantSummary, User, UserDownloadRecord, SupportedProduct } from './types';
+import { requireDatabase } from './reliability';
 
 export interface GoogleProfile {
   sub: string;
@@ -31,7 +32,8 @@ export interface DesktopAccessToken {
   tenantId: string;
 }
 
-const DESKTOP_TOKEN_AUDIENCE = 'visioncloud';
+// Every service that accepts the desktop token; each one requires its own name.
+const DESKTOP_TOKEN_AUDIENCE = ['visioncloud', 'visiontrainer'];
 const DESKTOP_TOKEN_LIFETIME_SECONDS = 10 * 60;
 
 function base64Url(bytes: Uint8Array): string {
@@ -51,8 +53,12 @@ function pemToBytes(pem: string): Uint8Array {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
-/** Create a short-lived RS256 token for the Studio -> Edge -> Cloud session. */
-export async function createDesktopAccessToken(env: Env, user: User): Promise<DesktopAccessToken> {
+/**
+ * Create a short-lived RS256 desktop token for the selected organization.
+ * Claims follow SDK IdentityAccessTokenClaims: tenant_id is the organization
+ * and role the effective role in it (super_admin stays platform-wide).
+ */
+export async function createDesktopAccessToken(env: Env, user: User, tenant: TenantSummary): Promise<DesktopAccessToken> {
   if (!env.DESKTOP_TOKEN_PRIVATE_KEY) {
     throw new Error('DESKTOP_TOKEN_PRIVATE_KEY is not configured');
   }
@@ -68,8 +74,10 @@ export async function createDesktopAccessToken(env: Env, user: User): Promise<De
     iss: env.DESKTOP_TOKEN_ISSUER || 'https://visiongo.app',
     aud: DESKTOP_TOKEN_AUDIENCE,
     sub: user.id,
-    tenant_id: user.tenantId,
-    role: user.role,
+    tenant_id: tenant.tenant_id,
+    role: user.role === 'super_admin' ? 'super_admin' : tenant.role,
+    tenant_name: tenant.name,
+    tenant_type: tenant.type,
     username: user.displayName || user.email.split('@')[0],
     email: user.email,
     iat: now,
@@ -95,7 +103,7 @@ export async function createDesktopAccessToken(env: Env, user: User): Promise<De
   return {
     accessToken: `${signingInput}.${base64Url(new Uint8Array(signature))}`,
     expiresIn,
-    tenantId: user.tenantId,
+    tenantId: tenant.tenant_id,
   };
 }
 
@@ -127,15 +135,11 @@ export async function verifyGoogleIdToken(
       exp?: string | number;
     };
 
-    if (!payload.sub || !payload.email) {
+    if (!payload.sub || !payload.email || !expectedClientId || payload.aud !== expectedClientId ||
+        ![true, 'true'].includes(payload.email_verified ?? false) || !payload.exp || !Number.isFinite(Number(payload.exp)) || Number(payload.exp) * 1000 <= Date.now()) {
       return null;
     }
 
-    // Verify Audience if GOOGLE_CLIENT_ID is configured
-    if (expectedClientId && payload.aud && payload.aud !== expectedClientId) {
-      console.warn(`[Auth] Google token audience mismatch: expected ${expectedClientId}, got ${payload.aud}`);
-      return null;
-    }
 
     return {
       sub: payload.sub,
@@ -148,10 +152,6 @@ export async function verifyGoogleIdToken(
     return null;
   }
 }
-
-// In-memory fallbacks when D1 database is not yet bound
-const fallbackCodes = new Map<string, { code: string; expiresAt: number; purpose: string }>();
-const fallbackUsers = new Map<string, User & { passwordHash?: string; passwordSalt?: string }>();
 
 /**
  * Derives a PBKDF2 hash using Web Crypto API.
@@ -187,77 +187,26 @@ export function generateSalt(): string {
 }
 
 export function generateVerificationCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  const values = new Uint32Array(1);
+  do { crypto.getRandomValues(values); } while (values[0] >= 4294800000);
+  return String(100000 + values[0] % 900000);
 }
 
-export async function saveVerificationCode(
-  env: Env,
-  email: string,
-  code: string,
-  purpose: string = 'register'
-): Promise<void> {
-  const normalizedEmail = email.toLowerCase().trim();
-  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-  const now = new Date().toISOString();
-
-  if (env.DB) {
-    try {
-      await env.DB.prepare('DELETE FROM email_verification_codes WHERE email = ?')
-        .bind(normalizedEmail)
-        .run();
-
-      const id = `code_${crypto.randomUUID().slice(0, 12)}`;
-      await env.DB.prepare(
-        'INSERT INTO email_verification_codes (id, email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-      )
-        .bind(id, normalizedEmail, code, purpose, expiresAt, now)
-        .run();
-      return;
-    } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to insert verification code in D1, using fallback:', err);
-    }
-  }
-
-  fallbackCodes.set(`${normalizedEmail}:${purpose}`, { code, expiresAt, purpose });
+export async function saveVerificationCode(env: Env, email: string, code: string, purpose = 'register'): Promise<void> {
+  const db = requireDatabase(env);
+  await db.batch([
+    db.prepare('DELETE FROM email_verification_codes WHERE email = ? AND purpose = ?').bind(email.toLowerCase().trim(), purpose),
+    db.prepare('INSERT INTO email_verification_codes (id, email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(`code_${crypto.randomUUID()}`, email.toLowerCase().trim(), code, purpose, Date.now() + 600000, new Date().toISOString()),
+  ]);
 }
 
-export async function verifyAndConsumeCode(
-  env: Env,
-  email: string,
-  code: string,
-  purpose: string = 'register'
-): Promise<boolean> {
-  const normalizedEmail = email.toLowerCase().trim();
-  const inputCode = code.trim();
-  const now = Date.now();
-
-  if (env.DB) {
-    try {
-      const record = await env.DB.prepare(
-        'SELECT id, code, expires_at FROM email_verification_codes WHERE email = ? AND purpose = ? ORDER BY expires_at DESC LIMIT 1'
-      )
-        .bind(normalizedEmail, purpose)
-        .first<{ id: string; code: string; expires_at: number }>();
-
-      if (record && record.code === inputCode && record.expires_at > now) {
-        await env.DB.prepare('DELETE FROM email_verification_codes WHERE id = ?')
-          .bind(record.id)
-          .run();
-        return true;
-      }
-      return false;
-    } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to verify code in D1, using fallback:', err);
-    }
-  }
-
-  const key = `${normalizedEmail}:${purpose}`;
-  const record = fallbackCodes.get(key);
-  if (record && record.code === inputCode && record.expiresAt > now) {
-    fallbackCodes.delete(key);
-    return true;
-  }
-  return false;
+export async function verifyAndConsumeCode(env: Env, email: string, code: string, purpose = 'register'): Promise<boolean> {
+  // Atomic consumption prevents concurrent requests reusing a verification code.
+  const record = await requireDatabase(env).prepare(
+    'DELETE FROM email_verification_codes WHERE email = ? AND purpose = ? AND code = ? AND expires_at > ? RETURNING id'
+  ).bind(email.toLowerCase().trim(), purpose, code.trim(), Date.now()).first<{ id: string }>();
+  return !!record;
 }
 
 export async function sendVerificationEmail(
@@ -265,12 +214,13 @@ export async function sendVerificationEmail(
   email: string,
   code: string
 ): Promise<{ success: boolean; error?: string }> {
-  console.log(`[Email Service] Verification code for ${email}: ${code}`);
+  if (!env.RESEND_API_KEY) return { success: false, error: 'Email service is not configured' };
 
   if (env.RESEND_API_KEY) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
+        signal: AbortSignal.timeout(10000),
         headers: {
           'Authorization': `Bearer ${env.RESEND_API_KEY}`,
           'Content-Type': 'application/json',
@@ -302,7 +252,7 @@ export async function sendVerificationEmail(
     }
   }
 
-  return { success: true };
+  return { success: false, error: 'Email delivery failed' };
 }
 
 /**
@@ -393,12 +343,13 @@ export async function verifySessionCookie(
 }
 
 /**
- * Queries user by email across D1 and fallback storage.
+ * Queries user by email across D1.
  */
 export async function getUserByEmail(
   env: Env,
   email: string
 ): Promise<(User & { passwordHash?: string; passwordSalt?: string }) | null> {
+  requireDatabase(env);
   const normalizedEmail = email.toLowerCase().trim();
 
   if (env.DB) {
@@ -441,11 +392,11 @@ export async function getUserByEmail(
         };
       }
     } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to query user by email in D1:', err);
+      throw err;
     }
   }
 
-  return fallbackUsers.get(normalizedEmail) || null;
+  return null;
 }
 
 /**
@@ -457,6 +408,7 @@ export async function registerUserWithEmail(
   password: string,
   displayName?: string
 ): Promise<{ user?: User; error?: string }> {
+  requireDatabase(env);
   const normalizedEmail = email.toLowerCase().trim();
   const existing = await getUserByEmail(env, normalizedEmail);
   if (existing) {
@@ -504,11 +456,10 @@ export async function registerUserWithEmail(
         )
         .run();
     } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to insert email user into D1:', err);
+      throw err;
     }
   }
 
-  fallbackUsers.set(normalizedEmail, newUser);
   return { user: newUser };
 }
 
@@ -555,12 +506,13 @@ export interface GitHubProfile {
 }
 
 /**
- * Upserts a GitHub OAuth user into D1 / fallback.
+ * Upserts a GitHub OAuth user into D1.
  */
 export async function getOrCreateGitHubUser(
   env: Env,
   profile: GitHubProfile
 ): Promise<User> {
+  requireDatabase(env);
   const now = new Date().toISOString();
   const githubId = String(profile.id);
   const email = (profile.email || `${profile.login}@users.noreply.github.com`).toLowerCase().trim();
@@ -629,33 +581,21 @@ export async function getOrCreateGitHubUser(
         lastLoginAt: now,
       };
     } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to query/insert GitHub user in D1:', err);
+      throw err;
     }
   }
 
-  const fallbackUser: User = {
-    id: `vg_usr_gh_${githubId.slice(0, 8)}`,
-    tenantId: `vg_tenant_gh_${githubId.slice(0, 8)}`,
-    role: 'member',
-    githubId,
-    authProvider: 'github',
-    email,
-    displayName,
-    avatarUrl,
-    createdAt: now,
-    lastLoginAt: now,
-  };
-  fallbackUsers.set(email, fallbackUser);
-  return fallbackUser;
+  throw new Error('Identity persistence unavailable');
 }
 
 /**
- * Upserts a Google user in Cloudflare D1. Falls back to mock state if DB is not bound.
+ * Upserts a Google user in Cloudflare D1. Database errors fail authentication.
  */
 export async function getOrCreateUser(
   env: Env,
   profile: GoogleProfile
 ): Promise<User> {
+  requireDatabase(env);
   const now = new Date().toISOString();
 
   if (env.DB) {
@@ -719,31 +659,18 @@ export async function getOrCreateUser(
         lastLoginAt: now,
       };
     } catch (err) {
-      console.warn('[D1 Auth Warning] Failed to query D1 database, using fallback:', err);
+      throw err;
     }
   }
 
-  // Graceful fallback when D1 is not yet provisioned
-  const fallbackUser: User = {
-    id: `vg_usr_demo_${profile.sub.slice(0, 8)}`,
-    tenantId: `vg_tenant_demo_${profile.sub.slice(0, 8)}`,
-    role: 'member',
-    googleSub: profile.sub,
-    authProvider: 'google',
-    email: profile.email,
-    displayName: profile.name || profile.email.split('@')[0],
-    avatarUrl: profile.picture,
-    createdAt: now,
-    lastLoginAt: now,
-  };
-  fallbackUsers.set(profile.email.toLowerCase(), fallbackUser);
-  return fallbackUser;
+  throw new Error('Identity persistence unavailable');
 }
 
 /**
- * Loads a user by their internal UUID from D1 or fallback.
+ * Loads a user by their internal UUID from D1.
  */
 export async function getUserById(env: Env, userId: string): Promise<User | null> {
+  requireDatabase(env);
   if (env.DB) {
     try {
       const row = await env.DB.prepare(
@@ -765,6 +692,8 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
         }>();
 
       if (row) {
+        // Reject historical sessions minted by the removed unauthenticated demo endpoint.
+        if (row.github_id === 'gh_demo_1092834' || row.google_sub === 'github:gh_demo_1092834') return null;
         return {
           id: row.id,
           tenantId: row.tenant_id,
@@ -780,12 +709,8 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
         };
       }
     } catch (err) {
-      console.warn('[D1 getUserById Warning]:', err);
+      throw err;
     }
-  }
-
-  for (const user of fallbackUsers.values()) {
-    if (user.id === userId) return user;
   }
 
   return null;
@@ -862,6 +787,8 @@ export interface DesktopAuthCodePayload {
   userId: string;
   codeChallenge: string;
   codeChallengeMethod: 'S256' | 'plain';
+  /** Organization chosen on the authorization page; absent for older pages. */
+  tenantId?: string;
   exp: number; // Unix ms
   jti: string;
 }
@@ -869,6 +796,8 @@ export interface DesktopAuthCodePayload {
 export interface DesktopRefreshTokenPayload {
   type: 'desktop_refresh_token';
   userId: string;
+  /** Organization the session is bound to; absent in tokens issued before organizations. */
+  tenantId?: string;
   exp: number; // Unix ms
   jti: string;
 }
@@ -877,7 +806,8 @@ export async function createDesktopAuthCode(
   user: User,
   codeChallenge: string,
   codeChallengeMethod: 'S256' | 'plain' = 'S256',
-  secretKey?: string
+  secretKey?: string,
+  tenantId?: string
 ): Promise<string> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const payload: DesktopAuthCodePayload = {
@@ -885,6 +815,7 @@ export async function createDesktopAuthCode(
     userId: user.id,
     codeChallenge,
     codeChallengeMethod,
+    tenantId,
     exp: Date.now() + 5 * 60 * 1000, // 5 minutes lifetime
     jti: crypto.randomUUID(),
   };
@@ -932,12 +863,14 @@ export async function verifyPkceChallenge(
 
 export async function createDesktopRefreshToken(
   user: User,
-  secretKey?: string
+  secretKey: string | undefined,
+  tenantId: string
 ): Promise<string> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const payload: DesktopRefreshTokenPayload = {
     type: 'desktop_refresh_token',
     userId: user.id,
+    tenantId,
     exp: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
     jti: crypto.randomUUID(),
   };

@@ -1,3 +1,4 @@
+import { SiteLink } from './SiteLink';
 import React from 'react';
 import { ArrowRight, Check } from 'lucide-react';
 import { Product } from '../types';
@@ -12,8 +13,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
   const { t } = useLanguage();
 
   return (
-    <div
-      onClick={() => onSelect(product.slug)}
+    <SiteLink
+      href={`/products/${product.slug}`}
+      onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onSelect(product.slug); } }}
       className="group relative rounded-2xl bg-zinc-900/60 border border-zinc-800/90 p-7 flex flex-col justify-between hover:border-zinc-700 transition-all duration-300 hover:shadow-2xl hover:shadow-black/60 cursor-pointer overflow-hidden"
     >
       {/* Subtle top indicator bar */}
@@ -82,6 +84,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
           <ArrowRight className="w-3.5 h-3.5" />
         </span>
       </div>
-    </div>
+    </SiteLink>
   );
 };

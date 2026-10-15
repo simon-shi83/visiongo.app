@@ -1,9 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, ArrowRight, Laptop, User } from 'lucide-react';
+import { CheckCircle2, ArrowRight, Building2, Laptop, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 import { AuthCard } from '../components/AuthCard';
 import { SeoHead } from '../components/SeoHead';
+
+interface DesktopTenant {
+  tenant_id: string;
+  name: string;
+  type: 'personal' | 'enterprise';
+  role: 'member' | 'org_admin';
+}
 
 export const DesktopAuthPage: React.FC = () => {
   const { user, loading } = useAuth();
@@ -15,6 +22,22 @@ export const DesktopAuthPage: React.FC = () => {
   } | null>(null);
   const [redirected, setRedirected] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  // Organizations the desktop session may act in; null until loaded.
+  const [tenants, setTenants] = useState<DesktopTenant[] | null>(null);
+  const [tenantId, setTenantId] = useState('');
+
+  useEffect(() => {
+    if (!user) return;
+    fetch('/api/orgs')
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error('organizations'))))
+      .then((data: { tenants?: DesktopTenant[]; current_tenant_id?: string | null }) => {
+        const list = data.tenants || [];
+        setTenants(list);
+        setTenantId(data.current_tenant_id || list[0]?.tenant_id || '');
+      })
+      .catch(() => setErrorMsg('无法读取您所在的组织，请稍后重试'));
+  }, [user]);
+  const choosesTenant = (tenants?.length ?? 0) > 1;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -48,6 +71,7 @@ export const DesktopAuthPage: React.FC = () => {
           body: JSON.stringify({
             code_challenge: params.codeChallenge,
             code_challenge_method: params.codeChallengeMethod || 'S256',
+            ...(tenantId ? { tenant_id: tenantId } : {}),
           }),
         });
         const body = (await response.json()) as { code?: string; error?: string };
@@ -82,18 +106,19 @@ export const DesktopAuthPage: React.FC = () => {
   };
 
   useEffect(() => {
-    // If user is already logged in and params are present, auto redirect
-    if (user && params?.redirectUri && !redirected && !errorMsg) {
+    // Auto redirect only when there is no organization to choose.
+    if (user && params?.redirectUri && tenants && !choosesTenant && !redirected && !errorMsg) {
       const timer = setTimeout(() => {
         void handleAuthorize();
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [user, params, redirected, errorMsg]);
+  }, [user, params, tenants, choosesTenant, redirected, errorMsg]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-32 pb-24 flex items-center justify-center px-4">
       <SeoHead
+        noindex
         title="VisionStudio 授权登录 — VISIONGO"
         description="通过官方统一账号安全登录 VisionStudio 工业智能体桌面应用。"
         canonicalPath="/auth/desktop"
@@ -149,7 +174,36 @@ export const DesktopAuthPage: React.FC = () => {
               </div>
             </div>
 
+            {choosesTenant && tenants && (
+              <fieldset className="space-y-2 text-left">
+                <legend className="text-xs text-zinc-400 mb-2">选择本次登录使用的组织：</legend>
+                {tenants.map(tenant => (
+                  <label
+                    key={tenant.tenant_id}
+                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer text-sm ${
+                      tenantId === tenant.tenant_id ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-zinc-800 bg-zinc-950/60'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="tenant"
+                      value={tenant.tenant_id}
+                      checked={tenantId === tenant.tenant_id}
+                      onChange={() => setTenantId(tenant.tenant_id)}
+                      className="accent-emerald-500"
+                    />
+                    <Building2 className="w-4 h-4 text-zinc-500 shrink-0" />
+                    <span className="flex-1 truncate text-zinc-200">{tenant.name}</span>
+                    <span className="text-[10px] font-mono text-zinc-500">
+                      {tenant.type === 'personal' ? '个人' : tenant.role === 'org_admin' ? '管理员' : '成员'}
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+
             <button
+              disabled={!tenants}
               onClick={() => void handleAuthorize()}
               className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
             >

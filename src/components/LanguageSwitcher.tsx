@@ -34,10 +34,11 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
   };
 
   return (
-    <div className={`relative inline-block text-left ${className}`} ref={containerRef}>
+    <div onKeyDown={event => { if (event.key === 'Escape') setIsOpen(false); }} className={`relative inline-block text-left ${className}`} ref={containerRef}>
       <button
+        aria-expanded={isOpen} aria-controls="language-options"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono font-medium text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 transition-colors focus:outline-none"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono font-medium text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 transition-colors"
         title="Switch Language / 切换语言"
       >
         <Globe className="w-3.5 h-3.5 text-emerald-400" />
@@ -48,7 +49,7 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-1.5 w-36 rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl p-1.5 z-50 animate-fadeIn backdrop-blur-xl">
+        <div id="language-options" className="absolute right-0 mt-1.5 w-36 rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl p-1.5 z-50 animate-fadeIn backdrop-blur-xl">
           <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 px-2 py-1 mb-1 border-b border-zinc-800/80">
             Language / 语言
           </div>

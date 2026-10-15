@@ -1,171 +1,57 @@
-import React from 'react';
+import type { ReactNode } from 'react';
+import { SiteLink } from './SiteLink';
 
-interface SafeMarkdownProps {
-  content: string;
-  className?: string;
-}
-
-/**
- * Safe, injection-free markdown renderer for release notes.
- * Converts markdown syntax into safe React elements without dangerouslySetInnerHTML.
- */
-export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className = '' }) => {
-  if (!content) return null;
-
-  const lines = content.split('\n');
-  const elements: React.ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeBuffer: string[] = [];
-
-  const parseInline = (text: string): React.ReactNode => {
-    // Process bold, inline code, and safe links
-    const parts: React.ReactNode[] = [];
-    let remaining = text;
-    let keyIdx = 0;
-
-    // Simple regex-based inline parser
-    while (remaining.length > 0) {
-      // Inline code: `code`
-      const codeMatch = remaining.match(/^`([^`]+)`/);
-      if (codeMatch) {
-        parts.push(
-          <code
-            key={keyIdx++}
-            className="px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400 font-mono text-xs border border-zinc-700/60"
-          >
-            {codeMatch[1]}
-          </code>
-        );
-        remaining = remaining.slice(codeMatch[0].length);
-        continue;
-      }
-
-      // Bold: **text**
-      const boldMatch = remaining.match(/^\*\*([^*]+)\*\*/);
-      if (boldMatch) {
-        parts.push(
-          <strong key={keyIdx++} className="font-bold text-white">
-            {boldMatch[1]}
-          </strong>
-        );
-        remaining = remaining.slice(boldMatch[0].length);
-        continue;
-      }
-
-      // Safe link: [text](https://...)
-      const linkMatch = remaining.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/);
-      if (linkMatch) {
-        parts.push(
-          <a
-            key={keyIdx++}
-            href={linkMatch[2]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
-          >
-            {linkMatch[1]}
-          </a>
-        );
-        remaining = remaining.slice(linkMatch[0].length);
-        continue;
-      }
-
-      // Plain character
-      const nextSpecial = remaining.search(/[`*[]/);
-      if (nextSpecial === -1) {
-        parts.push(remaining);
-        break;
-      } else if (nextSpecial > 0) {
-        parts.push(remaining.slice(0, nextSpecial));
-        remaining = remaining.slice(nextSpecial);
-      } else {
-        // Character didn't match a full token, consume 1 char
-        parts.push(remaining[0]);
-        remaining = remaining.slice(1);
-      }
+interface SafeMarkdownProps { content: string; className?: string; headingOffset?: number }
+// Render text as React nodes; raw HTML and unsafe URL schemes are never executed.
+export function SafeMarkdown({ content, className = '', headingOffset = 1 }: SafeMarkdownProps) {
+  const inline = (text: string): ReactNode[] => {
+    const result: ReactNode[] = [];
+    const tokens = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]+|#[^\s)]+)\)/g;
+    let start = 0;
+    let match: RegExpExecArray | null;
+    while ((match = tokens.exec(text))) {
+      if (match.index > start) result.push(text.slice(start, match.index));
+      const key = match.index;
+      if (match[1]) result.push(<code key={key} className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs text-emerald-300">{match[1]}</code>);
+      else if (match[2]) result.push(<strong key={key} className="font-semibold text-white">{match[2]}</strong>);
+      else result.push(<SiteLink key={key} href={match[4]} className="text-emerald-400 underline underline-offset-2">{match[3]}</SiteLink>);
+      start = tokens.lastIndex;
     }
-
-    return parts;
+    if (start < text.length) result.push(text.slice(start));
+    return result;
   };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Fenced code blocks ```
+  const nodes: ReactNode[] = [];
+  const lines = content.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line.trim()) continue;
     if (line.trim().startsWith('```')) {
-      if (inCodeBlock) {
-        elements.push(
-          <pre
-            key={`code-${i}`}
-            className="p-4 my-3 rounded-xl bg-zinc-950 border border-zinc-800 font-mono text-xs text-zinc-300 overflow-x-auto leading-relaxed"
-          >
-            <code>{codeBuffer.join('\n')}</code>
-          </pre>
-        );
-        codeBuffer = [];
-        inCodeBlock = false;
-      } else {
-        inCodeBlock = true;
-      }
+      const key = index;
+      const code: string[] = [];
+      while (++index < lines.length && !lines[index].trim().startsWith('```')) code.push(lines[index]);
+      nodes.push(<pre key={key} className="my-4 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-300"><code>{code.join('\n')}</code></pre>);
       continue;
     }
-
-    if (inCodeBlock) {
-      codeBuffer.push(line);
+    const heading = line.match(/^(#{1,6})\s+(.+)/);
+    if (heading) {
+      const Heading = `h${Math.min(6, heading[1].length + headingOffset)}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+      nodes.push(<Heading key={index} className="mb-3 mt-8 text-xl font-semibold text-white">{inline(heading[2])}</Heading>);
       continue;
     }
-
-    // Headings
-    if (line.startsWith('### ')) {
-      elements.push(
-        <h4 key={`h3-${i}`} className="text-base font-bold text-white mt-5 mb-2 font-mono">
-          {line.replace('### ', '')}
-        </h4>
-      );
+    if (/^\s*(---|\*\*\*)\s*$/.test(line)) { nodes.push(<hr key={index} className="my-6 border-zinc-800" />); continue; }
+    const bullet = /^\s*[-*]\s+/;
+    const ordered = /^\s*\d+[.)]\s+/;
+    const listPattern = bullet.test(line) ? bullet : ordered.test(line) ? ordered : null;
+    if (listPattern) {
+      const key = index;
+      const items: ReactNode[] = [];
+      const start = ordered.test(line) ? Number(line.trim().match(/^\d+/)?.[0]) : undefined;
+      do { items.push(<li key={index} className="pl-1">{inline(lines[index].replace(listPattern, ''))}</li>); index++; } while (index < lines.length && listPattern.test(lines[index]));
+      index--;
+      nodes.push(start === undefined ? <ul key={key} className="my-3 list-disc space-y-2 pl-6 text-sm leading-relaxed text-zinc-300">{items}</ul> : <ol key={key} start={start} className="my-3 list-decimal space-y-2 pl-6 text-sm leading-relaxed text-zinc-300">{items}</ol>);
       continue;
     }
-    if (line.startsWith('## ')) {
-      elements.push(
-        <h3 key={`h2-${i}`} className="text-lg font-bold text-white mt-6 mb-2 border-b border-zinc-800/80 pb-1">
-          {line.replace('## ', '')}
-        </h3>
-      );
-      continue;
-    }
-    if (line.startsWith('# ')) {
-      elements.push(
-        <h2 key={`h1-${i}`} className="text-xl font-extrabold text-white mt-6 mb-3">
-          {line.replace('# ', '')}
-        </h2>
-      );
-      continue;
-    }
-
-    // Bullet list items
-    if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-      const cleanItem = line.trim().replace(/^[-*]\s+/, '');
-      elements.push(
-        <li key={`li-${i}`} className="flex items-start gap-2 text-sm text-zinc-300 my-1 leading-relaxed">
-          <span className="text-emerald-400 mt-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-          <span>{parseInline(cleanItem)}</span>
-        </li>
-      );
-      continue;
-    }
-
-    // Empty lines
-    if (!line.trim()) {
-      elements.push(<div key={`empty-${i}`} className="h-2" />);
-      continue;
-    }
-
-    // Regular paragraphs
-    elements.push(
-      <p key={`p-${i}`} className="text-sm text-zinc-300 leading-relaxed my-1.5">
-        {parseInline(line)}
-      </p>
-    );
+    nodes.push(<p key={index} className="my-3 text-sm leading-relaxed text-zinc-300">{inline(line)}</p>);
   }
-
-  return <div className={`space-y-1 ${className}`}>{elements}</div>;
-};
+  return <div className={className}>{nodes}</div>;
+}

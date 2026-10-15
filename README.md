@@ -1,374 +1,156 @@
-# VISIONGO Official Web Platform
+# VISIONGO website
 
-> **Industrial Vision Intelligence**  
-> *Build, run, and improve industrial vision systems with AI.*  
-> Production Domain: [https://visiongo.app](https://visiongo.app)
+React and TypeScript frontend with a Cloudflare Worker for private GitHub releases,
+website authentication and engineering inquiries. Brand: **VISIONGO**. Domain:
+<https://visiongo.app>.
 
----
+The website is an independent application. It does not import the private source,
+headers or build outputs of Studio, Runtime, Edge or Cloud. Desktop authorization
+contracts are unchanged by the website reliability update.
 
-## 1. System Architecture Overview
+## Development and validation
 
-The VISIONGO web platform is an enterprise-grade, product-first technical website deployed globally on **Cloudflare Workers**. It serves as the primary portal for industrial automation engineers, vision system integrators, and enterprise manufacturing teams.
-
-```
-                      +---------------------------------------+
-                      |               Browser                 |
-                      |   (visiongo.app / www.visiongo.app)   |
-                      +---------------------------------------+
-                                          |
-                      +---------------------------------------+
-                      |       Cloudflare Global Edge          |
-                      |   (Worker Assets + Dynamic APIs)      |
-                      +---------------------------------------+
-                           /              |              \
-                          /               |               \
-   +-----------------------+   +-------------------+   +--------------------+
-   |   Static Assets / UI  |   | Edge APIs         |   | /api/download      |
-   | (React 19 + Tailwind) |   | /api/releases     |   | (Secure Proxy)     |
-   | Prerendered Snapshots |   | /api/auth/*       |   +--------------------+
-   +-----------------------+   | /api/contact      |              |
-                               +-------------------+              | Authenticated
-                                   /           \                  | Stream
-                    Non-blocking  /             \ D1 Queries      v
-                                 v               v             +--------------------+
-                     +-------------------+  +---------------+  | Private GitHub     |
-                     | Workers Analytics |  | Cloudflare D1 |  | Releases REST API  |
-                     | Engine Dataset    |  | Database (DB) |  | (PAT read-only)    |
-                     | visiongo_downloads|  | Users/History |  +--------------------+
-                     +-------------------+  +---------------+
-```
-
-### Core Architectural Guarantees
-1. **Zero Client Token Exposure**: Private GitHub tokens, OAuth secrets, and analytics secrets NEVER reach browser JavaScript.
-2. **Strict Direct Route & API Isolation**:
-   - Important public pages (`/`, `/downloads`, `/contact`, `/privacy`, `/terms`, etc.) are directly accessible with instant HTTP 200 without unnecessary redirects or requiring homepage navigation.
-   - Non-existent `/api/*` endpoints strictly return `HTTP 404 JSON`, never falling back to the SPA HTML document.
-   - Non-existent `/assets/*` files strictly return `HTTP 404 Plain Text`, preventing script syntax errors.
-3. **Anonymous Downloads Preserved**: Software downloads remain 100% accessible anonymously without requiring Google authentication.
-4. **Air-Gapped Industrial Guarantee**: Communicates clearly that VISIONGO core runtimes run 100% offline in air-gapped factory environments.
-5. **Data Minimization & Privacy**:
-   - Zero raw IP addresses stored in analytics (uses server-side HMAC-SHA256 pseudonymous hashing).
-   - Zero Google password handling (uses official Google Identity Services with minimal scopes: `openid`, `email`, `profile`).
-
----
-
-## 2. Product Suite Hierarchy
-
-| Product | Role | Downloadable? | Primary Platforms |
-| :--- | :--- | :--- | :--- |
-| **VisionStudio** | Engineering Workspace | Yes (`/downloads`) | Windows x64, Ubuntu x86_64 |
-| **VisionRuntime** | Production Runtime | Yes (`/downloads`) | Ubuntu Linux (x86_64, aarch64), Windows Server |
-| **VisionEdge** | On-site Intelligence Gateway | Yes (`/downloads`) | Industrial IPC Linux (x86_64, aarch64) |
-| **VisionCloud** | Cloud Intelligence (Optional) | **No** (Cloud SaaS) | Web / API Only |
-
-*Important Rule*: **VisionAgent** is the internal architectural framework name; the primary commercial brand is always **VISIONGO**.
-
----
-
-## 3. Technology Stack
-
-- **Frontend Core**: React 19 + TypeScript (Strict Mode)
-- **Styling**: Tailwind CSS with custom industrial tokens (`Plus Jakarta Sans` + `JetBrains Mono`)
-- **Authentication**: Official Google Identity Services (GIS) / OpenID Connect + signed HttpOnly sessions
-- **Storage**: Cloudflare D1 SQL database (`visiongo_db`) for users and download history
-- **Analytics**: Cloudflare Workers Analytics Engine (`visiongo_downloads`)
-- **Routing**: Client-side history routing with static route prerendering for SEO
-- **Markdown**: Custom injection-safe AST parser (no unsafe `dangerouslySetInnerHTML`)
-- **Edge Deployment**: Cloudflare Workers with Static Assets & Node.js compatibility
-- **CI/CD**: GitHub Actions deploying to `simon-shi83/website` on `main` branch
-
----
-
-## 4. Environment & Secrets Configuration
-
-A configuration template is provided in [`.env.example`](.env.example).
-
-### Configuration Matrix
-
-| Variable / Secret | Type | Location | Description |
-| :--- | :--- | :--- | :--- |
-| `GITHUB_RELEASE_TOKEN` | Secret | Cloudflare Secret | GitHub Personal Access Token (PAT) with read-only access to private repositories. |
-| `GITHUB_ORG` | Variable | Worker Env | GitHub organization or owner account (default: `simon-shi83`). |
-| `VISIONSTUDIO_REPO` | Variable | Worker Env | Private repository name for VisionStudio (default: `VisionStudio`). |
-| `VISIONRUNTIME_REPO` | Variable | Worker Env | Private repository name for VisionRuntime (default: `VisionRuntime`). |
-| `VISIONEDGE_REPO` | Variable | Worker Env | Private repository name for VisionEdge (default: `VisionEdge`). |
-| `DOWNLOAD_ANALYTICS_SECRET` | Secret | Cloudflare Secret | Cryptographic salt used for pseudonymous HMAC visitor deduplication. |
-| `GOOGLE_CLIENT_ID` | Variable/Secret | Cloudflare Secret | Google OAuth 2.0 Web Client ID from Google Cloud Console. |
-| `SESSION_SECRET` | Secret | Cloudflare Secret | Cryptographic key used to sign `vg_session` HttpOnly session cookies. |
-| `DESKTOP_TOKEN_PRIVATE_KEY` | Secret | Cloudflare Secret | PKCS#8 RSA private key used only for short-lived VisionStudio tokens. |
-| `DESKTOP_TOKEN_KEY_ID` | Variable | Worker Env | Signing key identifier; must match VisionCloud's configured key ID. |
-| `DESKTOP_TOKEN_ISSUER` | Variable | Worker Env | Token issuer, normally `https://visiongo.app`. |
-| `DOWNLOADS_CACHE_TTL_SEC` | Variable | Worker Env | In-worker cache TTL for release metadata (default: `600` seconds). |
-
-### Configuring Secrets in Cloudflare Workers
+Use Node.js 24 or newer (the Worker regression suite uses `node:sqlite`).
 
 ```bash
-# 1. GitHub private releases token
-npx wrangler secret put GITHUB_RELEASE_TOKEN
-
-# 2. Download analytics HMAC salt
-npx wrangler secret put DOWNLOAD_ANALYTICS_SECRET
-
-# 3. Session cookie signing secret
-npx wrangler secret put SESSION_SECRET
-
-# 4. Optional: Google OAuth Web Client ID
-npx wrangler secret put GOOGLE_CLIENT_ID
-
-# 5. Independent PKCS#8 RSA key for VisionStudio desktop tokens
-npx wrangler secret put DESKTOP_TOKEN_PRIVATE_KEY
+pnpm install --frozen-lockfile
+pnpm run dev
+pnpm test
 ```
 
----
+`pnpm test` checks frontend and Worker types, builds the client, prerenders and
+verifies public pages, and runs the Worker tests against an in-memory SQLite
+adapter with the real migrations. External providers are mocked only in tests;
+production has no simulated accounts, releases or installer responses.
 
-## 5. Cloudflare D1 Database & Migrations (Phase 3)
+For a previously built tree, `pnpm run test:worker` runs only Worker regressions.
 
-Cloudflare D1 provides lightweight, serverless SQL storage for user accounts and personal download history.
+Browser smoke tests are optional and require Playwright and a local Chrome:
 
-### 1. Database Creation
 ```bash
-npx wrangler d1 create visiongo_db
+pnpm run preview -- --host 127.0.0.1 --port 3001
+# In another terminal, with Playwright installed in your test environment:
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs pnpm run test:browser
 ```
-The command outputs your `database_id`. Add it to `wrangler.jsonc`:
+
+`SITE_URL`, `CHROME_PATH` and `QA_DIR` override the default local URL, Chrome path
+and screenshot directory. Browser tests intercept provider/contact requests and
+send no real emails. They cover four viewport widths, localization, hydration,
+article refresh/back, dialog keyboard interaction, download states and inquiry
+retry. Do not point this smoke test at production.
+
+## Routes and content
+
+`shared/routes.json` is the public route registry used by the Worker, frontend,
+prerenderer and SEO verifier. English URLs retain their original paths. Chinese
+URLs use `/zh`, for example `/zh/downloads`. Legacy `?lang=zh` public links redirect
+to their Chinese URL. Each public URL has a canonical, language alternates and a
+prerendered snapshot. Article details use `/resources/:slug` and support refresh,
+sharing and browser history.
+
+Account and desktop sign-in pages are excluded from sitemap/indexing and use
+`Cache-Control: no-store`. Unknown pages return 404; unknown APIs return JSON 404;
+missing assets never fall back to an HTML document.
+
+The homepage uses an actual Studio UI screenshot of an example engineering project,
+not a live production feed or benchmark. Static content contains no fabricated
+release versions, customer case metrics or performance guarantees. See
+`public/screenshots/README.md` for screenshot provenance.
+
+## Production configuration
+
+The checked-in Worker configuration intentionally contains no database ID or
+secrets. Before deploying, bind the real D1 database in `wrangler.jsonc`:
+
 ```jsonc
-"d1_databases": [
-  {
-    "binding": "DB",
-    "database_name": "visiongo_db",
-    "database_id": "<YOUR_D1_DATABASE_UUID>"
-  }
-]
+"d1_databases": [{
+  "binding": "DB",
+  "database_name": "visiongo_db",
+  "database_id": "YOUR_EXISTING_DATABASE_ID",
+  "migrations_dir": "migrations"
+}]
 ```
 
-### 2. Apply Migrations
-Version-controlled migrations live in [`migrations/`](migrations/). Apply them in numeric order.
+If there is no database yet, create one with `wrangler d1 create visiongo_db` and
+use the returned ID. Apply **all** migrations in numeric order for a new database.
+For an existing installation already at 0003, apply 0004 before publishing this
+Worker. Prefer `wrangler d1 migrations apply visiongo_db --remote` when migrations
+are already tracked; if earlier migrations were applied via `d1 execute`, use the
+same tracking procedure and apply only the missing migration:
 
 ```bash
-# Apply migrations locally for testing:
-npx wrangler d1 execute visiongo_db --local --file=migrations/0001_create_users_and_downloads.sql
-npx wrangler d1 execute visiongo_db --local --file=migrations/0002_add_cloud_identity.sql
-
-# Apply migrations to production Cloudflare D1:
-npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql
-npx wrangler d1 execute visiongo_db --remote --file=migrations/0002_add_cloud_identity.sql
+pnpm exec wrangler d1 execute visiongo_db --remote --file=migrations/0004_website_reliability.sql
 ```
 
-### 3. Database Schema
-- **`users`**:
-  - `id` (TEXT PRIMARY KEY, internal UUID like `vg_usr_xxxxx`)
-  - `tenant_id` (TEXT, indexed stable Cloud tenant scope; organization members may share it)
-  - `role` (`member`, `org_admin`, or `super_admin`)
-  - `google_sub` (TEXT UNIQUE NOT NULL, stable Google subject identifier)
-  - `email` (TEXT NOT NULL)
-  - `display_name` (TEXT)
-  - `avatar_url` (TEXT)
-  - `created_at` (TEXT)
-  - `last_login_at` (TEXT)
-- **`user_download_history`**:
-  - `id` (TEXT PRIMARY KEY)
-  - `user_id` (TEXT NOT NULL, foreign key to `users.id`)
-  - `product` (TEXT NOT NULL)
-  - `version` (TEXT NOT NULL)
-  - `asset_name` (TEXT NOT NULL)
-  - `downloaded_at` (TEXT NOT NULL)
+Required configuration by feature:
 
----
+| Configuration | Purpose |
+| --- | --- |
+| `DB` + migrations 0001–0004 | Accounts, codes, inquiries, notification outbox, OAuth states and rate limits |
+| `SESSION_SECRET` | Signed website sessions and keyed abuse-limit digests |
+| `GITHUB_RELEASE_TOKEN` | Read-only token for real release metadata and binaries |
+| `GITHUB_ORG`, `VISIONSTUDIO_REPO`, `VISIONRUNTIME_REPO`, `VISIONEDGE_REPO` | Optional repository overrides |
+| `RESEND_API_KEY` | Verification emails and inquiry notifications |
+| `CONTACT_EMAIL_TO` | Optional inquiry recipient; default `contact@visiongo.app` |
+| `GOOGLE_CLIENT_ID` | Google sign-in audience validation |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub OAuth web application |
+| `DESKTOP_TOKEN_PRIVATE_KEY`, `DESKTOP_TOKEN_KEY_ID`, `DESKTOP_TOKEN_ISSUER` | Existing independent desktop-token signing configuration |
+| `DOWNLOAD_ANALYTICS_SECRET`, `DOWNLOADS_ANALYTICS` | Existing optional download analytics |
 
-## 6. Server-Side Edge API Architecture
+Set secrets with `pnpm exec wrangler secret put NAME`. Never put secrets in frontend
+`VITE_*` variables. Configure verified Resend sending identities for
+`auth@visiongo.app` and `contact@visiongo.app`. Configure GitHub's callback as
+`https://visiongo.app/api/auth/github/callback`. The public client IDs returned by
+`/api/auth/config` are not secrets.
 
-### 1. `GET /api/releases`
-Returns normalized release information for all three downloadable products (`visionstudio`, `visionruntime`, `visionedge`).
-- Cached in Worker memory for 10 minutes (`s-maxage=600`).
-- Supports `?includePrereleases=true`.
+Downloads remain anonymous. Missing release credentials or provider failures are
+reported as unavailable; an empty successful release list is shown as no releases.
+Optional SHA-256 digests come from GitHub asset metadata; the site does not claim
+that a package is signed or verified merely because a checksum exists.
 
-### 2. `GET /api/download/:product/:assetId`
-Secure proxy streaming binary release assets from private repositories to clients.
-- Whitelists only certified VISIONGO products.
-- Checks for authenticated `vg_session` cookie; if present, logs download in D1 `user_download_history`.
-- Streams asset with sanitized `Content-Disposition: attachment; filename="..."` headers.
-- Dispatches privacy-preserving event to Workers Analytics Engine.
+Database errors fail authentication. Missing/failing email delivery returns an
+error and never reveals a verification code. The unauthenticated GitHub demo login
+endpoint is removed, and historical demo identities cannot use website sessions.
+GitHub OAuth uses a browser-bound, expiring, single-use state plus PKCE. Existing
+real user IDs and session formats are preserved.
 
-### 3. `POST /api/auth/google`
-Authenticates a user via official Google Identity Services credential.
-- Server-side verification with Google's tokeninfo API.
-- Upserts user record in Cloudflare D1.
-- Sets signed `vg_session` cookie: `HttpOnly; Secure; SameSite=Lax; Max-Age=30 days`.
+## Inquiry delivery and operations
 
-### 4. `GET /api/auth/me`
-Returns current authenticated user profile (`{ user: { id, email, displayName, avatarUrl, createdAt } }`) or `{ user: null }`.
+`POST /api/contact` validates and persists the inquiry before returning a reference.
+The page and modal share the same form and submit product interest, locale and
+source. A submission ID makes retries idempotent. No database means an explicit
+503, with a direct email alternative.
 
-### 5. `POST /api/auth/logout`
-Terminates the session by clearing `vg_session` cookie.
+Notification delivery runs in `waitUntil` and through the configured five-minute
+cron. A lease and provider idempotency key prevent duplicate dispatch; failures
+retry with backoff up to eight attempts. If Resend is not configured, records remain
+pending and the cron sends them after configuration is restored. Receipt means
+saved, not that notification has already reached the team.
 
-### 6. `POST /api/auth/desktop-token`
-Validates the HttpOnly website session and returns a ten-minute RS256 token scoped to the user's tenant. VisionStudio passes this opaque token through VisionEdge to VisionCloud.
-
-### 7. `GET /api/user/downloads`
-Returns the authenticated user's software download history from D1.
-
-### 8. `POST /api/contact`
-Enterprise pilot and architecture consultation submission handler with bot honeypot protection.
-
-### 9. `GET /api/health`
-Edge status, CF data center code, and D1/Analytics readiness probe.
-
----
-
-## 7. Privacy-Conscious Download Analytics (Workers Analytics Engine)
-
-### Enabling Analytics Engine:
-1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) > **Compute (Workers & Pages)** > **Analytics Engine**.
-2. Click **Enable Analytics Engine**.
-3. In `wrangler.jsonc`, uncomment the `analytics_engine_datasets` block:
-```jsonc
-"analytics_engine_datasets": [
-  {
-    "binding": "DOWNLOADS_ANALYTICS",
-    "dataset": "visiongo_downloads"
-  }
-]
-```
-
-### Example SQL Queries for Analytics Engine
+Monitor queued/failed notifications without dumping customer message bodies:
 
 ```sql
--- 1. Total downloads by product
-SELECT blob1 AS product, COUNT() AS total_downloads
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY product
-ORDER BY total_downloads DESC;
-
--- 2. Downloads by country
-SELECT blob6 AS country, COUNT() AS total_downloads
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY country
-ORDER BY total_downloads DESC
-LIMIT 10;
-
--- 3. Downloads by region
-SELECT blob6 AS country, blob7 AS region, COUNT() AS total_downloads
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY country, region
-ORDER BY total_downloads DESC;
-
--- 4. VisionStudio downloads by country
-SELECT blob6 AS country, COUNT() AS downloads
-FROM visiongo_downloads
-WHERE blob1 = 'visionstudio' AND blob8 = 'success'
-GROUP BY country
-ORDER BY downloads DESC;
-
--- 5. VisionRuntime downloads by country
-SELECT blob6 AS country, COUNT() AS downloads
-FROM visiongo_downloads
-WHERE blob1 = 'visionruntime' AND blob8 = 'success'
-GROUP BY country
-ORDER BY downloads DESC;
-
--- 6. VisionEdge downloads by country
-SELECT blob6 AS country, COUNT() AS downloads
-FROM visiongo_downloads
-WHERE blob1 = 'visionedge' AND blob8 = 'success'
-GROUP BY country
-ORDER BY downloads DESC;
-
--- 7. Downloads by platform & architecture
-SELECT blob4 AS platform, blob5 AS arch, COUNT() AS total_downloads
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY platform, arch
-ORDER BY total_downloads DESC;
-
--- 8. Downloads during last 30 days
-SELECT toStartOfDay(timestamp) AS day, blob1 AS product, COUNT() AS daily_downloads
-FROM visiongo_downloads
-WHERE timestamp >= NOW() - INTERVAL '30' DAY AND blob8 = 'success'
-GROUP BY day, product
-ORDER BY day ASC;
-
--- 9. Approximate unique anonymous download sources
-SELECT blob1 AS product, COUNT(DISTINCT blob9) AS approximate_unique_clients
-FROM visiongo_downloads
-WHERE blob8 = 'success'
-GROUP BY product;
+SELECT notification_status, COUNT(*)
+FROM contact_inquiries
+GROUP BY notification_status;
 ```
 
----
+Investigate failed deliveries before manually resetting their retry count and
+`next_attempt_at`. Retain the inquiry ID so provider retries use the same key.
+Expired OAuth states, rate-limit counters and verification codes are cleaned by
+cron. Customer inquiries are retained for follow-up; handle deletion requests
+through the documented support channel.
 
-## 8. Google Search Console & SEO Configuration
+## Release and rollback
 
-All 12 public routes have dedicated prerendered HTML snapshots in `dist/` with full OpenGraph, Twitter, canonical, and JSON-LD structured data.
+1. Run `pnpm test` and the local browser smoke test.
+2. Bind D1, apply missing migrations and configure provider secrets/sending identities.
+3. Publish the Worker and assets together through the website repository's release process.
+4. Verify one real anonymous download, OAuth round trip, verification email and a
+   saved inquiry with delivered notification. These provider checks require the
+   production configuration and are not substituted by mocked tests.
 
-### Step-by-Step Search Console Verification:
-1. Open [Google Search Console](https://search.google.com/search-console).
-2. Choose **Domain** property and enter `visiongo.app`.
-3. Copy the TXT verification record: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`.
-4. In [Cloudflare Dashboard](https://dash.cloudflare.com/) > **DNS** > **Records** for `visiongo.app`:
-   - Type: `TXT`
-   - Name: `@`
-   - Content: `google-site-verification=XXXXXXXXXXXXXXXXXXXX`
-   - TTL: `Auto`
-5. Click **Verify** in Google Search Console.
-6. Under **Sitemaps**, submit: `https://visiongo.app/sitemap.xml`.
-7. Request indexing for major landing pages (`/`, `/downloads`, `/products/visionstudio`, `/products/visionruntime`, `/products/visionedge`, `/contact`).
-
----
-
-## 9. Manual Setup Checklist for Repository Owner
-
-The following actions must be executed manually by the project maintainer:
-
-- [ ] **Cloudflare D1 Database**:
-  - Run `npx wrangler d1 create visiongo_db`
-  - Paste the generated `database_id` into `wrangler.jsonc`
-  - Run `npx wrangler d1 execute visiongo_db --remote --file=migrations/0001_create_users_and_downloads.sql`
-  - Run `npx wrangler d1 execute visiongo_db --remote --file=migrations/0002_add_cloud_identity.sql`
-- [ ] **Cloudflare Analytics Engine**:
-  - Visit `https://dash.cloudflare.com/<ACCOUNT_ID>/workers/analytics-engine` and click **Enable Analytics Engine**
-  - Uncomment the `analytics_engine_datasets` block in `wrangler.jsonc`
-- [ ] **Cloudflare Worker Secrets**:
-  - Run `npx wrangler secret put GITHUB_RELEASE_TOKEN` (Fine-grained PAT with read access to private repos)
-  - Run `npx wrangler secret put DOWNLOAD_ANALYTICS_SECRET` (HMAC salt for anonymous download deduplication)
-  - Run `npx wrangler secret put SESSION_SECRET` (Cryptographic key for signing session cookies)
-  - Run `npx wrangler secret put DESKTOP_TOKEN_PRIVATE_KEY` (Independent PKCS#8 RSA signing key for desktop tokens)
-  - Run `npx wrangler secret put GOOGLE_CLIENT_ID` (Web Client ID from Google Cloud Console)
-- [ ] **Google Cloud Console (OAuth & Sign-In)**:
-  - Create OAuth 2.0 Web Application client
-  - Add Authorized JavaScript Origins: `https://visiongo.app`, `https://www.visiongo.app`, `http://localhost:3000`
-- [ ] **Google Search Console**:
-  - Add DNS TXT record in Cloudflare for domain verification
-  - Submit `https://visiongo.app/sitemap.xml`
-
----
-
-## 10. Local Development & Testing
-
-```bash
-# Install dependencies
-pnpm install
-
-# TypeScript typecheck
-pnpm run typecheck
-
-# Production build and prerender static routes
-pnpm run build
-
-# Start local Vite development server
-pnpm run dev
-
-# Preview Cloudflare Worker environment locally
-npx wrangler dev
-```
-
----
-
-## 11. Contacts & Channels
-
-- **Target Domain**: [https://visiongo.app](https://visiongo.app)
-- **General Inquiries**: [contact@visiongo.app](mailto:contact@visiongo.app)
-- **Enterprise & OEM Licensing**: [sales@visiongo.app](mailto:sales@visiongo.app)
-- **Technical Support & Integrators**: [support@visiongo.app](mailto:support@visiongo.app)
-- **GitHub Repository**: [simon-shi83/website](https://github.com/simon-shi83/website)
+Migration 0004 is additive. Preserve its tables if rolling back application code;
+existing account/download data is not rewritten. Do not roll back to a Worker that
+restores simulated sign-in, code disclosure or fake installer responses. Use a
+previous hardened deployment or a forward fix for those paths.

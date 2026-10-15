@@ -1,3 +1,4 @@
+import { SiteLink } from '../components/SiteLink';
 import React from 'react';
 import { FileText, AlertTriangle, ShieldCheck, Scale, Cpu, Mail } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
@@ -123,13 +124,13 @@ export const TermsOfUsePage: React.FC = () => {
                 : 'For commercial production licensing, hardware dongle procurement, or OEM integration agreements, please contact our enterprise team:'}
             </p>
             <div className="pt-2 text-xs font-mono text-emerald-400">
-              <a href="mailto:sales@visiongo.app" className="hover:underline">
+              <SiteLink href="mailto:sales@visiongo.app" className="hover:underline">
                 sales@visiongo.app
-              </a>{' '}
+              </SiteLink>{' '}
               <span className="text-zinc-600">|</span>{' '}
-              <a href="mailto:contact@visiongo.app" className="hover:underline text-zinc-300">
+              <SiteLink href="mailto:contact@visiongo.app" className="hover:underline text-zinc-300">
                 contact@visiongo.app
-              </a>
+              </SiteLink>
             </div>
           </div>
         </div>

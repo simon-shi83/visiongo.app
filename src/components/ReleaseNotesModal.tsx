@@ -1,4 +1,6 @@
-import React from 'react';
+import { SiteLink } from './SiteLink';
+import React, { useRef } from 'react';
+import { useDialogFocus } from './useDialogFocus';
 import { X, Calendar, Download, ShieldCheck, Tag } from 'lucide-react';
 import { ProductRelease } from '../types/downloads';
 import { SafeMarkdown } from './SafeMarkdown';
@@ -22,6 +24,9 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
   onSelectRelease,
 }) => {
   const { locale } = useLanguage();
+
+  const dialog = useRef<HTMLDivElement>(null);
+  useDialogFocus(isOpen && !!release, dialog, onClose);
 
   if (!isOpen || !release) return null;
 
@@ -47,6 +52,8 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
       <div
+        ref={dialog}
+        role="dialog" aria-modal="true" aria-labelledby="release-title" tabIndex={-1}
         className="relative w-full max-w-3xl max-h-[85vh] flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
@@ -62,7 +69,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
                   Pre-release
                 </span>
               )}
-              <h3 className="text-lg font-bold text-white font-sans">
+              <h3 id="release-title" className="text-lg font-bold text-white font-sans">
                 {productName} {locale === 'zh' ? '发版日志' : 'Release Notes'}
               </h3>
             </div>
@@ -73,7 +80,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
               </span>
               <span className="flex items-center gap-1.5 text-emerald-400/90">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                {locale === 'zh' ? '官方签名与完整性校验' : 'Verified Build'}
+                {locale === 'zh' ? '来自官方发布仓库' : 'Official release repository'}
               </span>
             </div>
           </div>
@@ -143,14 +150,14 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
                       </div>
                     </div>
 
-                    <a
+                    <SiteLink
                       href={asset.downloadUrl}
                       download
                       className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>{locale === 'zh' ? '下载' : 'Download'}</span>
-                    </a>
+                    </SiteLink>
                   </div>
                 ))}
               </div>
@@ -160,7 +167,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/80 flex items-center justify-between text-xs font-mono text-zinc-500">
-          <span>{locale === 'zh' ? '离线部署就绪 • SHA-256 签名' : 'Air-gapped deployment • SHA-256 Verified'}</span>
+          <span>{locale === 'zh' ? '系统与架构以安装包标注为准' : 'Check package system and architecture'}</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"

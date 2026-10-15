@@ -20,8 +20,8 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
         title={t.nav.solutions}
         description={
           locale === 'zh'
-            ? '面向高精密离散制造的高性能工业视觉检测、字符验证与自适应控制解决方案。'
-            : 'Engineered solutions for surface defect detection, OCR reading, PCB inspection, and industrial AI assistance.'
+            ? '围绕形状匹配、测量与区域分析组织工业视觉检测流程。'
+            : 'Explore industrial vision workflows for matching, measurement and region analysis.'
         }
         canonicalPath="/solutions"
       />
@@ -32,13 +32,13 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
           badge={t.solutionsSection.badge}
           title={
             locale === 'zh'
-              ? '开箱即用的工业机器视觉解决方案'
-              : 'Turnkey Industrial Vision Implementations'
+              ? '围绕检测任务设计工作流'
+              : 'Workflows for Industrial Inspection'
           }
           description={
             locale === 'zh'
-              ? '攻克离散制造业微缺陷识别、严苛曲面 DPM 字符识读与设备参数自愈补偿难题。'
-              : 'Addressing challenging discrete manufacturing defect detection, barcode/OCR readability, and autonomous parameter tuning.'
+              ? '围绕形状匹配、测量与区域分析评估适合项目的检测流程。'
+              : 'Explore matching, measurement and region-analysis workflows for your project.'
           }
         />
 
@@ -85,7 +85,7 @@ export const SolutionsPage: React.FC<SolutionsPageProps> = ({ onNavigate, onOpen
 
                 <div className="lg:col-span-5 bg-zinc-950/70 border border-zinc-800 rounded-2xl p-6 space-y-4">
                   <div className="text-xs font-mono uppercase tracking-wider text-zinc-400 font-semibold border-b border-zinc-800/80 pb-3">
-                    {t.solutionsSection.performanceMetrics}
+                    {locale === 'zh' ? '工程关注点' : 'Engineering considerations'}
                   </div>
 
                   <ul className="space-y-3">

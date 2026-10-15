@@ -1,0 +1,189 @@
+[
+  {
+    "path": "/",
+    "title": {
+      "en": "Industrial Vision Intelligence",
+      "zh": "工业视觉工作流"
+    },
+    "description": {
+      "en": "Build and debug industrial vision workflows with VisionStudio and deploy them with VisionRuntime.",
+      "zh": "使用 VisionStudio 编排和调试工业视觉流程，通过 VisionRuntime 在现场执行。"
+    }
+  },
+  {
+    "path": "/products/visionstudio",
+    "title": {
+      "en": "VisionStudio — Engineering Workspace",
+      "zh": "VisionStudio 可视化工程工作台"
+    },
+    "description": {
+      "en": "Design and debug industrial vision workflows in VisionStudio.",
+      "zh": "了解 VisionStudio 的工作流编排、模板训练和运行分析。"
+    }
+  },
+  {
+    "path": "/products/visionruntime",
+    "title": {
+      "en": "VisionRuntime — Production Runtime",
+      "zh": "VisionRuntime 现场执行引擎"
+    },
+    "description": {
+      "en": "Run industrial vision workflows locally with VisionRuntime.",
+      "zh": "了解 VisionRuntime 本地检测执行与设备通信。"
+    }
+  },
+  {
+    "path": "/products/visionedge",
+    "title": {
+      "en": "VisionEdge — Edge Gateway",
+      "zh": "VisionEdge 边缘网关"
+    },
+    "description": {
+      "en": "Explore the VisionEdge gateway in the VISIONGO architecture.",
+      "zh": "了解 VISIONGO 架构中的 VisionEdge 边缘网关。"
+    }
+  },
+  {
+    "path": "/products/visioncloud",
+    "title": {
+      "en": "VisionCloud — Cloud Intelligence",
+      "zh": "VisionCloud 云端建议与分析"
+    },
+    "description": {
+      "en": "Explore optional cloud advice and analysis in the VISIONGO architecture.",
+      "zh": "了解 VISIONGO 可选的云端建议与分析服务。"
+    }
+  },
+  {
+    "path": "/solutions",
+    "title": {
+      "en": "Industrial Solutions",
+      "zh": "工业视觉应用场景"
+    },
+    "description": {
+      "en": "Evaluate workflow design for matching, measurement and inspection.",
+      "zh": "评估形状匹配、尺寸测量和区域检测工作流。"
+    }
+  },
+  {
+    "path": "/developers",
+    "title": {
+      "en": "Developers — Getting Started",
+      "zh": "开发者与快速开始"
+    },
+    "description": {
+      "en": "Get started with VisionStudio, VisionRuntime and public SDK contracts.",
+      "zh": "从下载、连接和工作流调试开始使用 VISIONGO，了解公共 SDK 契约。"
+    }
+  },
+  {
+    "path": "/downloads",
+    "title": {
+      "en": "Downloads — Software Releases",
+      "zh": "软件下载"
+    },
+    "description": {
+      "en": "Download published VISIONGO packages for your operating system and architecture.",
+      "zh": "选择适合操作系统与架构的 VISIONGO 官方发行包。"
+    }
+  },
+  {
+    "path": "/resources",
+    "title": {
+      "en": "Resources — Engineering Guides",
+      "zh": "工程资源与指南"
+    },
+    "description": {
+      "en": "Read VISIONGO workflow and deployment engineering guides.",
+      "zh": "阅读 VISIONGO 工作流与部署工程指南。"
+    }
+  },
+  {
+    "path": "/about",
+    "title": {
+      "en": "About VISIONGO",
+      "zh": "关于 VISIONGO"
+    },
+    "description": {
+      "en": "Learn about the VISIONGO industrial vision platform.",
+      "zh": "了解 VISIONGO 工业视觉平台。"
+    }
+  },
+  {
+    "path": "/contact",
+    "title": {
+      "en": "Contact Engineering",
+      "zh": "联系工程团队"
+    },
+    "description": {
+      "en": "Contact the VISIONGO team about products, evaluations and deployments.",
+      "zh": "咨询 VISIONGO 产品、试用和工业视觉部署。"
+    }
+  },
+  {
+    "path": "/privacy",
+    "title": {
+      "en": "Privacy Policy",
+      "zh": "隐私政策"
+    },
+    "description": {
+      "en": "Read how VISIONGO handles account, inquiry and website data.",
+      "zh": "了解 VISIONGO 账户、咨询与网站数据的处理方式。"
+    }
+  },
+  {
+    "path": "/terms",
+    "title": {
+      "en": "Terms of Use",
+      "zh": "使用条款"
+    },
+    "description": {
+      "en": "Read the terms for VISIONGO website and account services.",
+      "zh": "阅读 VISIONGO 网站与账户服务的使用条款。"
+    }
+  },
+  {
+    "path": "/resources/getting-started",
+    "title": {
+      "en": "Getting Started with VisionStudio and VisionRuntime",
+      "zh": "开始使用 VisionStudio 与 VisionRuntime"
+    },
+    "description": {
+      "en": "A practical VISIONGO engineering guide.",
+      "zh": "VISIONGO 实用工程指南。"
+    }
+  },
+  {
+    "path": "/resources/workflow-debugging",
+    "title": {
+      "en": "Debugging an Inspection Workflow",
+      "zh": "调试检测工作流"
+    },
+    "description": {
+      "en": "A practical VISIONGO engineering guide.",
+      "zh": "VISIONGO 实用工程指南。"
+    }
+  },
+  {
+    "path": "/resources/local-deployment",
+    "title": {
+      "en": "Planning a Local Deployment",
+      "zh": "规划本地部署"
+    },
+    "description": {
+      "en": "A practical VISIONGO engineering guide.",
+      "zh": "VISIONGO 实用工程指南。"
+    }
+  },
+  {
+    "path": "/resources/sdk-contracts",
+    "title": {
+      "en": "Understanding SDK Contract Boundaries",
+      "zh": "了解 SDK 契约边界"
+    },
+    "description": {
+      "en": "A practical VISIONGO engineering guide.",
+      "zh": "VISIONGO 实用工程指南。"
+    }
+  }
+]

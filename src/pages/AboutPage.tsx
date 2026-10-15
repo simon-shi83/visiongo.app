@@ -1,3 +1,4 @@
+import { SiteLink } from '../components/SiteLink';
 import React from 'react';
 import { Mail, Shield, Terminal, ArrowRight } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
@@ -102,13 +103,13 @@ export const AboutPage: React.FC<AboutPageProps> = ({ onOpenContact }) => {
               <span>{t.aboutPage.scheduleCall}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-            <a
+            <SiteLink
               href="mailto:contact@visiongo.app"
               className="px-6 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-mono text-xs font-medium text-center transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <Mail className="w-4 h-4 text-zinc-400" />
               <span>{t.aboutPage.emailEngineering}</span>
-            </a>
+            </SiteLink>
           </div>
         </div>
       </div>

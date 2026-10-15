@@ -32,7 +32,7 @@ async function generatePseudonymousClientId(
 ): Promise<string> {
   try {
     const encoder = new TextEncoder();
-    const keyData = encoder.encode(secretKey || 'default-fallback-salt-visiongo-2026');
+    const keyData = encoder.encode(secretKey);
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
       keyData,
@@ -62,7 +62,8 @@ export async function recordDownloadAnalytics(
   ctx?: ExecutionContext
 ): Promise<void> {
   // If Analytics Engine binding is not configured in this environment, exit gracefully
-  if (!env.DOWNLOADS_ANALYTICS) {
+  const secret = env.DOWNLOAD_ANALYTICS_SECRET;
+  if (!env.DOWNLOADS_ANALYTICS || !secret) {
     return;
   }
 
@@ -75,7 +76,7 @@ export async function recordDownloadAnalytics(
 
       const pseudoClientId = await generatePseudonymousClientId(
         clientIp,
-        env.DOWNLOAD_ANALYTICS_SECRET || 'visiongo-anon-key'
+        secret
       );
 
       const cf = (request as unknown as { cf?: Record<string, string> }).cf || {};
@@ -107,7 +108,7 @@ export async function recordDownloadAnalytics(
           details.version,
           details.assetName,
           details.platform || 'generic',
-          details.arch || 'universal',
+          details.arch || 'unknown',
           country,
           region,
           details.status,

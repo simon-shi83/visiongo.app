@@ -12,8 +12,8 @@ interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   loginWithGoogle: (credential: string) => Promise<boolean>;
-  loginWithGitHub: (mock?: boolean) => Promise<boolean>;
-  sendEmailCode: (email: string, purpose?: 'register' | 'login') => Promise<{ success: boolean; message?: string; error?: string; devCode?: string }>;
+  loginWithGitHub: () => Promise<boolean>;
+  sendEmailCode: (email: string, purpose?: 'register' | 'login') => Promise<{ success: boolean; message?: string; error?: string }>;
   registerWithEmail: (email: string, code: string, password: string, displayName?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -68,31 +68,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const loginWithGitHub = async (mock: boolean = true): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/auth/github/direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mock }),
-      });
-
-      if (!res.ok) return false;
-      const data = await res.json();
-      if (data.user) {
-        setUser(data.user);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      console.error('[AuthContext] GitHub Login error:', err);
-      return false;
-    }
+  const loginWithGitHub = async (): Promise<boolean> => {
+    const returnUrl = `${window.location.pathname}${window.location.search}`;
+    window.location.assign(`/api/auth/github?returnUrl=${encodeURIComponent(returnUrl)}`);
+    return false;
   };
 
   const sendEmailCode = async (
     email: string,
     purpose: 'register' | 'login' = 'register'
-  ): Promise<{ success: boolean; message?: string; error?: string; devCode?: string }> => {
+  ): Promise<{ success: boolean; message?: string; error?: string }> => {
     try {
       const res = await fetch('/api/auth/email/send-code', {
         method: 'POST',
@@ -104,7 +89,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!res.ok) {
         return { success: false, error: data.error || '发送验证码失败' };
       }
-      return { success: true, message: data.message, devCode: data.devCode };
+      return { success: true, message: data.message };
     } catch {
       return { success: false, error: '网络连接失败，请检查网络设置' };
     }

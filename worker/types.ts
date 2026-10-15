@@ -24,6 +24,7 @@ export interface ReleaseAsset {
   contentType: string;
   platform: PlatformType;
   arch: ArchitectureType;
+  digest?: string;
   downloadUrl: string; // Internal API download proxy URL
 }
 
@@ -66,9 +67,19 @@ export interface AnalyticsEngineDataset {
   writeDataPoint(point: AnalyticsDataPoint): void;
 }
 
+/** Wire shape of SDK IdentityTenantSummary (SDK/schemas/identity.json). */
+export interface TenantSummary {
+  tenant_id: string;
+  name: string;
+  type: 'personal' | 'enterprise';
+  role: 'member' | 'org_admin';
+}
+
 export interface User {
   id: string;
+  /** Personal organization of the user. */
   tenantId: string;
+  /** Platform-wide role; roles inside an organization live in organization_members. */
   role: 'super_admin' | 'org_admin' | 'member';
   googleSub?: string;
   githubId?: string;
@@ -101,7 +112,7 @@ export interface Env {
   VISIONSTUDIO_REPO?: string;
   VISIONRUNTIME_REPO?: string;
   VISIONEDGE_REPO?: string;
-  CONTACT_EMAIL_KEY?: string;
+  CONTACT_EMAIL_TO?: string;
   DOWNLOADS_CACHE_TTL_SEC?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
