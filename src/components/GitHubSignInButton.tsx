@@ -32,7 +32,8 @@ export const GitHubSignInButton: React.FC<GitHubSignInButtonProps> = ({ classNam
     setLoading(true);
     if (githubClientId) {
       // Real GitHub OAuth redirect
-      const returnUrl = encodeURIComponent(window.location.pathname);
+      // Keep the query: the desktop sign-in page carries the PKCE handshake in it.
+      const returnUrl = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
       window.location.href = `/api/auth/github?returnUrl=${returnUrl}`;
       return;
     }
