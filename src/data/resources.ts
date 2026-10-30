@@ -21,7 +21,7 @@ In the workflow workspace, add the acquisition and processing steps required for
 ## 5. Validate before production
 Check error paths, expected results and execution costs on your own hardware. Keep permission checks and operator confirmation in place when a workflow can control production devices. Treat a working sample as the start of validation, not a production acceptance test.
 
-[Download software](https://visiongo.app/downloads)
+[Download software](/downloads)
 `,
 `## 1. 选择兼容的安装包
 分别为工程工作站和执行设备选择适合操作系统、CPU 架构的 VisionStudio 与 VisionRuntime 安装包。阅读版本说明和随包安装文档，不要仅凭版本号推断兼容性。
@@ -38,7 +38,7 @@ Check error paths, expected results and execution costs on your own hardware. Ke
 ## 5. 投产前验证
 在自己的硬件上检查异常路径、预期结果与执行耗时。涉及生产设备控制时保留权限检查与操作确认。样本运行成功只是验证的起点，不代表已经完成生产验收。
 
-[前往下载](https://visiongo.app/zh/downloads)
+[前往下载](/zh/downloads)
 `],
   },
   {

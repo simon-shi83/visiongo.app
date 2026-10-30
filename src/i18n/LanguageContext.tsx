@@ -13,6 +13,8 @@ export function LanguageProvider({ children, initialLocale }: { children: ReactN
   const setLocale = (next: SupportedLocale) => {
     setLocaleState(next);
     try { localStorage.setItem('visiongo_locale', next); } catch { /* Storage may be unavailable in privacy mode. */ }
+    // The server reads this to keep an explicit choice over the edition's default language.
+    document.cookie = `visiongo_locale=${next}; Path=/; Max-Age=31536000; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`;
     const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.history.pushState({}, '', localizedPath(current, next));
     window.dispatchEvent(new PopStateEvent('popstate'));

@@ -55,7 +55,7 @@ function AppContent({ initialPath }: AppProps) {
     if (!new URL(next, window.location.origin).hash) window.scrollTo(0, 0);
   };
   useEffect(() => {
-    const hash = new URL(location, 'https://visiongo.app').hash.slice(1);
+    const hash = new URL(location, window.location.origin).hash.slice(1);
     if (!hash) return;
     // A lazy-loaded route may not have committed when this effect runs.
     let stopped = false;

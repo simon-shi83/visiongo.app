@@ -91,9 +91,9 @@ test('database failures do not create ephemeral identities; fake GitHub login is
 test('email registration and password login persist the same identity', async () => {
   const env = environment();
   await auth.saveVerificationCode(env, 'user@example.com', '123456');
-  const registration = await request('/api/auth/email/register', { email: 'user@example.com', code: '123456', password: 'long-password' }, env);
+  const registration = await request('/api/auth/email/register', { email: 'user@example.com', code: '123456', password: 'long-password-1' }, env);
   assert.equal(registration.status, 200); const user = (await registration.json()).user;
-  const login = await request('/api/auth/email/login', { email: 'user@example.com', password: 'long-password' }, env);
+  const login = await request('/api/auth/email/login', { email: 'user@example.com', password: 'long-password-1' }, env);
   assert.equal(login.status, 200); assert.equal((await login.json()).user.id, user.id);
   assert.equal((await request('/api/auth/email/login', { email: 'user@example.com', password: 'wrong-password' }, env)).status, 401);
 });
@@ -201,4 +201,178 @@ test('anonymous downloads stream real bytes and provider failures are not mistak
   await mockFetch(async () => new Response('{}', { status: 404 }), async () => {
     assert.equal((await request('/api/download/visionstudio/42', undefined, env)).status, 404);
   });
+});
+test('each edition redirects www and plain HTTP to its configured origin only', async () => {
+  for (const origin of ['https://visiongo.app', 'https://visiongo.com.cn']) {
+    const env = { ...environment(), PUBLIC_ORIGIN: origin };
+    const host = new URL(origin).host;
+    const www = await worker.fetch(new Request(`https://www.${host}/zh/downloads?x=1`), env, { waitUntil() {} });
+    assert.equal(www.status, 301); assert.equal(www.headers.get('Location'), `${origin}/zh/downloads?x=1`);
+    const plain = await worker.fetch(new Request(`http://${host}/about`, { headers: { 'x-forwarded-proto': 'http' } }), env, { waitUntil() {} });
+    assert.equal(plain.status, 301); assert.equal(plain.headers.get('Location'), `${origin}/about`);
+    assert.equal((await worker.fetch(new Request(`${origin}/api/health`), env, { waitUntil() {} })).status, 200);
+  }
+  assert.equal((await request('/api/health', undefined, { ...environment(), PUBLIC_ORIGIN: undefined })).status, 200);
+  const robots = await worker.fetch(new Request('https://visiongo.com.cn/robots.txt'), environment(), { waitUntil() {} });
+  assert.match(await robots.text(), /Sitemap: https:\/\/visiongo\.com\.cn\/sitemap\.xml/);
+});
+test('the China edition defaults to Chinese unless the visitor chose a language', async () => {
+  const cn = { ...environment(), DEFAULT_LOCALE: 'zh' };
+  const go = (path, env, headers = {}) => worker.fetch(new Request(`https://visiongo.com.cn${path}`, { headers }), env, { waitUntil() {} });
+  for (const [path, target] of [['/', '/zh'], ['/about', '/zh/about'], ['/downloads/visionstudio', '/zh/downloads/visionstudio'], ['/my', '/my?lang=zh'],
+                                ['/auth/desktop?redirect_uri=http%3A%2F%2F127.0.0.1%3A5000%2Fcb&state=s', '/auth/desktop?redirect_uri=http%3A%2F%2F127.0.0.1%3A5000%2Fcb&state=s&lang=zh']]) {
+    const response = await go(path, cn);
+    assert.equal(response.status, 302, path); assert.equal(response.headers.get('Location'), `https://visiongo.com.cn${target}`, path);
+  }
+  for (const [path, headers] of [['/about', { Cookie: 'visiongo_locale=en' }], ['/zh/about', {}], ['/api/health', {}]]) {
+    assert.notEqual((await go(path, cn, headers)).status, 302, path);
+  }
+  assert.notEqual((await go('/about', environment())).status, 302, 'international edition stays English');
+});
+
+test('auth config lists only exact https portal redirect URIs', async () => {
+  const env = { ...environment(), PORTAL_REDIRECT_URIS: ' https://cloud.visiongo.com.cn/v1/admin ,http://cloud.visiongo.com.cn/v1/x,https://a.example/p?q=1,https://cloud.visiongo.com.cn/v1/organization,not a url' };
+  const body = await (await request('/api/auth/config', undefined, env)).json();
+  assert.deepEqual(body.portalRedirectUris, ['https://cloud.visiongo.com.cn/v1/admin', 'https://cloud.visiongo.com.cn/v1/organization']);
+  assert.deepEqual((await (await request('/api/auth/config')).json()).portalRedirectUris, []);
+});
+
+// ---------------------------------------------------------------------------
+// Sign-in methods per edition, password reset and account hardening.
+// ---------------------------------------------------------------------------
+
+const resendMail = async (action) => {
+  const sent = [];
+  await mockFetch(async (url, options) => {
+    if (String(url).startsWith('https://api.resend.com')) { sent.push(JSON.parse(options.body)); return Response.json({ id: 'mail' }); }
+    return new Response('{}', { status: 500 });
+  }, action.bind(null, sent));
+  return sent;
+};
+const codeOf = mail => mail.subject.match(/(\d{6})$/)[1];
+const sessionOf = response => response.headers.get('Set-Cookie').match(/vg_session=[^;]+/)[0];
+
+test('each edition serves only its sign-in methods', async () => {
+  const china = { ...environment(), AUTH_METHODS: 'email', GOOGLE_CLIENT_ID: 'g', GITHUB_CLIENT_ID: 'h', GITHUB_CLIENT_SECRET: 's' };
+  const config = await (await request('/api/auth/config', undefined, china)).json();
+  assert.deepEqual([config.methods, config.googleClientId, config.githubClientId], [['email'], null, null]);
+  for (const [path, body] of [['/api/auth/github', undefined], ['/api/auth/github/callback?code=x&state=y', undefined], ['/api/auth/google', { credential: 'x' }]]) {
+    const response = await request(path, body, china);
+    assert.deepEqual([response.status, (await response.json()).error], [404, 'auth_method_disabled'], path);
+  }
+  const abroad = { ...environment(), AUTH_METHODS: 'google,github' };
+  assert.deepEqual((await (await request('/api/auth/config', undefined, abroad)).json()).methods, ['google', 'github']);
+  for (const path of ['/api/auth/email/send-code', '/api/auth/email/register', '/api/auth/email/login', '/api/auth/email/reset-password']) {
+    assert.equal((await request(path, { email: 'a@example.com', password: 'abcdefg1', code: '123456' }, abroad)).status, 404, path);
+  }
+  assert.deepEqual((await (await request('/api/auth/config')).json()).methods, ['email', 'google', 'github']);
+});
+
+test('verification emails use the edition sender and a subject per purpose', async () => {
+  const env = { ...environment(), RESEND_API_KEY: 're_test', PUBLIC_ORIGIN: 'https://visiongo.com.cn' };
+  const sent = await resendMail(async () => {
+    assert.equal((await request('/api/auth/email/send-code', { email: 'new@example.com' }, env)).status, 200);
+  });
+  assert.equal(sent[0].from, 'VISIONGO <no-reply@visiongo.com.cn>');
+  assert.match(sent[0].subject, /注册验证码: \d{6}$/);
+  const custom = { ...env, EMAIL_FROM: 'VISIONGO <auth@mail.visiongo.com.cn>' };
+  assert.equal((await resendMail(async () => { await request('/api/auth/email/send-code', { email: 'other@example.com' }, custom); }))[0].from,
+               'VISIONGO <auth@mail.visiongo.com.cn>');
+  assert.equal((await request('/api/auth/email/send-code', { email: 'x@example.com' }, environment())).status, 503);  // no mail service
+});
+
+test('sign-up enforces the password rule', async () => {
+  const env = environment();
+  for (const [password, error] of [['short1', /8–128/], ['onlyletters', /字母和数字/], ['12345678', /字母和数字/]]) {
+    await auth.saveVerificationCode(env, 'rule@example.com', '123456');
+    const response = await request('/api/auth/email/register', { email: 'rule@example.com', code: '123456', password }, env);
+    assert.equal(response.status, 400); assert.match((await response.json()).error, error);
+  }
+});
+
+test('password reset: same answer for unknown emails, new password works, old sessions end', async () => {
+  const env = { ...environment(), RESEND_API_KEY: 're_test' };
+  await auth.saveVerificationCode(env, 'reset@example.com', '123456');
+  const registration = await request('/api/auth/email/register', { email: 'reset@example.com', code: '123456', password: 'old-password-1' }, env);
+  const oldSession = sessionOf(registration);
+
+  const unknown = await resendMail(async () => {
+    const response = await request('/api/auth/email/send-code', { email: 'nobody@example.com', purpose: 'reset' }, env);
+    assert.equal(response.status, 200);
+  });
+  assert.equal(unknown.length, 0);
+
+  const mails = await resendMail(async () => {
+    assert.equal((await request('/api/auth/email/send-code', { email: 'reset@example.com', purpose: 'reset' }, env)).status, 200);
+  });
+  assert.match(mails[0].subject, /重置密码验证码/);
+  const code = codeOf(mails[0]);
+  assert.equal((await request('/api/auth/email/reset-password', { email: 'reset@example.com', code, password: 'weak' }, env)).status, 400);
+  assert.equal((await request('/api/auth/email/reset-password', { email: 'reset@example.com', code: '000000', password: 'new-password-2' }, env)).status, 400);
+  const reset = await request('/api/auth/email/reset-password', { email: 'reset@example.com', code, password: 'new-password-2' }, env);
+  assert.equal(reset.status, 200);
+  assert.equal((await request('/api/auth/email/reset-password', { email: 'reset@example.com', code, password: 'new-password-3' }, env)).status, 400);  // used once
+
+  assert.equal((await request('/api/auth/email/login', { email: 'reset@example.com', password: 'old-password-1' }, env)).status, 401);
+  const login = await request('/api/auth/email/login', { email: 'reset@example.com', password: 'new-password-2' }, env);
+  assert.equal(login.status, 200);
+  assert.equal((await (await request('/api/auth/me', undefined, env, { Cookie: oldSession })).json()).user, null);
+  assert.ok((await (await request('/api/auth/me', undefined, env, { Cookie: sessionOf(login) })).json()).user);
+  assert.equal((await request('/api/orgs', undefined, env, { Cookie: oldSession })).status, 401);
+});
+
+test('legacy password hashes are upgraded on sign-in', async () => {
+  const env = environment();
+  const salt = 'legacy-salt';
+  const legacy = await auth.hashPassword('legacy-pass-1', salt);  // 50000 iterations
+  env.DB.sqlite.prepare("INSERT INTO users (id, tenant_id, role, google_sub, auth_provider, email, password_hash, password_salt, created_at, last_login_at) VALUES ('vg_usr_old', 'vg_tenant_old', 'member', 'email:old@example.com', 'email', 'old@example.com', ?, ?, '2026-01-01', '2026-01-01')").run(legacy, salt);
+  assert.equal((await request('/api/auth/email/login', { email: 'old@example.com', password: 'legacy-pass-1' }, env)).status, 200);
+  const row = env.DB.sqlite.prepare("SELECT password_hash, password_iterations FROM users WHERE id = 'vg_usr_old'").get();
+  assert.equal(row.password_iterations, auth.PASSWORD_ITERATIONS);
+  assert.notEqual(row.password_hash, legacy);
+  assert.equal((await request('/api/auth/email/login', { email: 'old@example.com', password: 'legacy-pass-1' }, env)).status, 200);
+});
+
+test('Google and GitHub join the account of the same verified email', async () => {
+  const env = { ...environment(), GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', GOOGLE_CLIENT_ID: 'gclient' };
+  await auth.saveVerificationCode(env, 'person@example.com', '123456');
+  const registered = await (await request('/api/auth/email/register', { email: 'person@example.com', code: '123456', password: 'password-1' }, env)).json();
+
+  const start = await request('/api/auth/github?returnUrl=/my', undefined, env);
+  const state = new URL(start.headers.get('Location')).searchParams.get('state');
+  await mockFetch(async url => {
+    if (String(url).includes('access_token')) return Response.json({ access_token: 'provider-token' });
+    if (String(url).endsWith('/emails')) return Response.json([{ email: 'Person@Example.com', primary: true, verified: true }]);
+    return Response.json({ id: 77, login: 'person' });
+  }, async () => {
+    const callback = await request(`/api/auth/github/callback?code=c&state=${state}`, undefined, env, { Cookie: start.headers.get('Set-Cookie').split(';')[0] });
+    const me = await (await request('/api/auth/me', undefined, env, { Cookie: sessionOf(callback) })).json();
+    assert.equal(me.user.id, registered.user.id);
+  });
+
+  const google = { sub: 'google-sub-1', email: 'person@example.com', email_verified: true, aud: 'gclient', exp: Math.floor(Date.now() / 1000) + 600 };
+  await mockFetch(async () => Response.json(google), async () => {
+    const response = await request('/api/auth/google', { credential: 'token' }, env);
+    assert.equal((await response.json()).user.id, registered.user.id);
+  });
+  const row = env.DB.sqlite.prepare('SELECT github_id, google_sub FROM users WHERE id = ?').get(registered.user.id);
+  assert.deepEqual({ ...row }, { github_id: '77', google_sub: 'google-sub-1' });
+  assert.equal(env.DB.sqlite.prepare('SELECT count(*) AS n FROM users').get().n, 1);
+
+  // An unverified Google email never joins an account.
+  await mockFetch(async () => Response.json({ ...google, sub: 'google-sub-2', email: 'other@example.com', email_verified: false }), async () => {
+    assert.equal((await request('/api/auth/google', { credential: 'token' }, env)).status, 401);
+  });
+});
+
+test('the token-in-URL desktop endpoint is gone and sign-in attempts are limited per address', async () => {
+  const env = environment();
+  assert.equal((await request('/api/auth/desktop-token', {}, env)).status, 404);
+  let limited = 0;
+  for (let index = 0; index < 32; index++) {
+    const response = await request('/api/auth/email/login', { email: `probe${index}@example.com`, password: 'password-1' }, env,
+                                   { 'CF-Connecting-IP': '203.0.113.9' });
+    if (response.status === 429) limited++;
+  }
+  assert.ok(limited >= 1);
 });

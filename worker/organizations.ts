@@ -12,12 +12,13 @@
 
 import type { Env, TenantSummary, User } from './types';
 import { json, requireDatabase } from './reliability';
-import { getUserById, verifySessionCookie } from './auth';
+import { getSessionUser } from './auth';
+import { cloudApiUrl, handleCloudAccountApi } from './cloudAccounts';
 
 type MemberRole = 'admin' | 'member';
 type MemberStatus = 'invited' | 'active' | 'removed';
 
-interface OrganizationRow {
+export interface OrganizationRow {
   id: string;
   name: string;
   type: 'personal' | 'enterprise';
@@ -120,7 +121,7 @@ export function effectiveRole(user: User, tenant: TenantSummary): 'member' | 'or
 // Browser API for the account page (session cookie). Not used by desktop clients.
 // ===========================================================================
 
-async function loadOrganization(env: Env, orgId: string): Promise<OrganizationRow | null> {
+export async function loadOrganization(env: Env, orgId: string): Promise<OrganizationRow | null> {
   return requireDatabase(env).prepare('SELECT id, name, type, status FROM organizations WHERE id = ?')
     .bind(orgId).first<OrganizationRow>();
 }
@@ -155,10 +156,11 @@ function parseRole(value: unknown): MemberRole | null {
 /** Handles /api/orgs and /api/orgs/{id}/...; returns null for other paths. */
 export async function handleOrganizationApi(request: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname !== '/api/orgs' && !url.pathname.startsWith('/api/orgs/')) return null;
-  const session = await verifySessionCookie(request.headers.get('Cookie'), env.SESSION_SECRET);
-  const user = session ? await getUserById(env, session.userId) : null;
+  const user = await getSessionUser(env, request.headers.get('Cookie'));
   if (!user) return json({ error: 'Unauthorized' }, 401);
   const platformAdmin = user.role === 'super_admin';
+  const credits = await handleCloudAccountApi(request, env, url, user);
+  if (credits) return credits;
 
   if (url.pathname === '/api/orgs' && request.method === 'GET') {
     const tenants = await listTenants(env, user);
@@ -171,7 +173,7 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
       organizations = results || [];
     }
     return json({ tenants, current_tenant_id: resolved?.tenant.tenant_id ?? null,
-                  is_platform_admin: platformAdmin, organizations });
+                  is_platform_admin: platformAdmin, organizations, credits_available: cloudApiUrl(env) !== null });
   }
 
   if (url.pathname === '/api/orgs' && request.method === 'POST') {

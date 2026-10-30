@@ -13,7 +13,8 @@ interface AuthContextType {
   loading: boolean;
   loginWithGoogle: (credential: string) => Promise<boolean>;
   loginWithGitHub: () => Promise<boolean>;
-  sendEmailCode: (email: string, purpose?: 'register' | 'login') => Promise<{ success: boolean; message?: string; error?: string }>;
+  sendEmailCode: (email: string, purpose?: 'register' | 'reset') => Promise<{ success: boolean; message?: string; error?: string }>;
+  resetPassword: (email: string, code: string, password: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   registerWithEmail: (email: string, code: string, password: string, displayName?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -76,7 +77,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const sendEmailCode = async (
     email: string,
-    purpose: 'register' | 'login' = 'register'
+    purpose: 'register' | 'reset' = 'register'
   ): Promise<{ success: boolean; message?: string; error?: string }> => {
     try {
       const res = await fetch('/api/auth/email/send-code', {
@@ -147,6 +148,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const resetPassword = async (
+    email: string,
+    code: string,
+    password: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const res = await fetch('/api/auth/email/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.error || '重置密码失败' };
+      return { success: true, message: data.message };
+    } catch {
+      return { success: false, error: '网络连接失败，请稍后重试' };
+    }
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -165,6 +185,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         sendEmailCode,
         registerWithEmail,
         loginWithEmail,
+        resetPassword,
         logout,
         refreshUser,
       }}

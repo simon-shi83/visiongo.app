@@ -9,6 +9,7 @@
  * - Anonymous downloads remain 100% accessible without authentication.
  */
 
+import { passwordProblem, passwordProblemText } from '../shared/passwordPolicy';
 import { Env, TenantSummary, User, UserDownloadRecord, SupportedProduct } from './types';
 import { requireDatabase } from './reliability';
 
@@ -24,6 +25,8 @@ export interface SessionPayload {
   googleSub?: string;
   authSubject?: string;
   exp: number; // Unix timestamp in ms
+  /** users.session_version when the session was created; absent means 0. */
+  sv?: number;
 }
 
 export interface DesktopAccessToken {
@@ -156,7 +159,25 @@ export async function verifyGoogleIdToken(
 /**
  * Derives a PBKDF2 hash using Web Crypto API.
  */
-export async function hashPassword(password: string, salt: string): Promise<string> {
+/** PBKDF2 iterations of new password hashes; older hashes are upgraded on the next sign-in. */
+export const PASSWORD_ITERATIONS = 210000;
+/** Iterations of hashes stored before password_iterations existed. */
+const LEGACY_PASSWORD_ITERATIONS = 50000;
+
+/** Returns why a new password is not acceptable (Chinese message), or null. Same rule as the sign-up form. */
+export function passwordPolicyError(password: string): string | null {
+  const problem = passwordProblem(password);
+  return problem ? passwordProblemText(problem, true) : null;
+}
+
+function equalStrings(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let i = 0; i < a.length; i++) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return difference === 0;
+}
+
+export async function hashPassword(password: string, salt: string, iterations = LEGACY_PASSWORD_ITERATIONS): Promise<string> {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -169,7 +190,7 @@ export async function hashPassword(password: string, salt: string): Promise<stri
     {
       name: 'PBKDF2',
       salt: enc.encode(salt),
-      iterations: 50000,
+      iterations,
       hash: 'SHA-256',
     },
     keyMaterial,
@@ -209,49 +230,58 @@ export async function verifyAndConsumeCode(env: Env, email: string, code: string
   return !!record;
 }
 
+export type CodePurpose = 'register' | 'reset';
+
+/** Sender of verification emails: EMAIL_FROM, else no-reply@ the edition's host. */
+export function emailSender(env: Env): string {
+  if (env.EMAIL_FROM?.trim()) return env.EMAIL_FROM.trim();
+  let host = 'visiongo.app';
+  try { if (env.PUBLIC_ORIGIN) host = new URL(env.PUBLIC_ORIGIN).hostname; } catch { /* keep default */ }
+  return `VISIONGO <no-reply@${host}>`;
+}
+
+const CODE_MAIL: Record<CodePurpose, { subject: string; intro: string }> = {
+  register: { subject: '注册验证码', intro: '您正在注册 VISIONGO 账户。请在页面中输入以下 6 位验证码：' },
+  reset: { subject: '重置密码验证码', intro: '您正在重置 VISIONGO 账户的密码。请在页面中输入以下 6 位验证码：' },
+};
+
 export async function sendVerificationEmail(
   env: Env,
   email: string,
-  code: string
+  code: string,
+  purpose: CodePurpose = 'register'
 ): Promise<{ success: boolean; error?: string }> {
   if (!env.RESEND_API_KEY) return { success: false, error: 'Email service is not configured' };
-
-  if (env.RESEND_API_KEY) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        signal: AbortSignal.timeout(10000),
-        headers: {
-          'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'VISIONGO <auth@visiongo.app>',
-          to: [email],
-          subject: `[VISIONGO] 注册验证码: ${code}`,
-          html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 540px; margin: 0 auto; padding: 32px 24px; background: #09090b; color: #f4f4f5; border-radius: 16px; border: 1px solid #27272a;">
-              <h2 style="color: #10b981; margin-top: 0; font-size: 20px;">VISIONGO 工业视觉智能平台</h2>
-              <p style="font-size: 14px; color: #a1a1aa; line-height: 1.6;">您正在申请注册或登录 VISIONGO 账户。请在页面中输入以下 6 位验证码：</p>
-              <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
-                <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #ffffff;">${code}</span>
-              </div>
-              <p style="font-size: 12px; color: #71717a; margin-bottom: 0;">验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>
+  const mail = CODE_MAIL[purpose];
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: emailSender(env),
+        to: [email],
+        subject: `[VISIONGO] ${mail.subject}: ${code}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 540px; margin: 0 auto; padding: 32px 24px; background: #09090b; color: #f4f4f5; border-radius: 16px; border: 1px solid #27272a;">
+            <h2 style="color: #10b981; margin-top: 0; font-size: 20px;">VISIONGO 工业视觉智能平台</h2>
+            <p style="font-size: 14px; color: #a1a1aa; line-height: 1.6;">${mail.intro}</p>
+            <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
+              <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #ffffff;">${code}</span>
             </div>
-          `,
-        }),
-      });
-
-      if (!res.ok) {
-        console.warn(`[Resend Error] Status ${res.status}`);
-      } else {
-        return { success: true };
-      }
-    } catch (err) {
-      console.warn('[Resend Request Error]', err);
-    }
+            <p style="font-size: 12px; color: #71717a; margin-bottom: 0;">验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>
+          </div>
+        `,
+      }),
+    });
+    if (res.ok) return { success: true };
+    console.warn(`[Resend Error] Status ${res.status}`);
+  } catch (err) {
+    console.warn('[Resend Request Error]', err);
   }
-
   return { success: false, error: 'Email delivery failed' };
 }
 
@@ -261,11 +291,12 @@ export async function sendVerificationEmail(
 export async function createSessionCookie(
   userId: string,
   authSubject: string,
-  secretKey?: string
+  secretKey?: string,
+  sessionVersion = 0
 ): Promise<{ cookieHeader: string; sessionPayload: SessionPayload }> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const exp = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-  const sessionPayload: SessionPayload = { userId, googleSub: authSubject, authSubject, exp };
+  const sessionPayload: SessionPayload = { userId, googleSub: authSubject, authSubject, exp, sv: sessionVersion };
 
   const encoder = new TextEncoder();
   const payloadJson = JSON.stringify(sessionPayload);
@@ -348,14 +379,14 @@ export async function verifySessionCookie(
 export async function getUserByEmail(
   env: Env,
   email: string
-): Promise<(User & { passwordHash?: string; passwordSalt?: string }) | null> {
+): Promise<(User & { passwordHash?: string; passwordSalt?: string; passwordIterations?: number }) | null> {
   requireDatabase(env);
   const normalizedEmail = email.toLowerCase().trim();
 
   if (env.DB) {
     try {
       const row = await env.DB.prepare(
-        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, password_hash, password_salt, created_at, last_login_at FROM users WHERE LOWER(email) = ?'
+        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, password_hash, password_salt, password_iterations, session_version, created_at, last_login_at FROM users WHERE LOWER(email) = ? ORDER BY created_at, id LIMIT 1'
       )
         .bind(normalizedEmail)
         .first<{
@@ -370,6 +401,8 @@ export async function getUserByEmail(
           avatar_url: string | null;
           password_hash: string | null;
           password_salt: string | null;
+          password_iterations: number | null;
+          session_version: number | null;
           created_at: string;
           last_login_at: string;
         }>();
@@ -387,6 +420,8 @@ export async function getUserByEmail(
           avatarUrl: row.avatar_url || undefined,
           passwordHash: row.password_hash || undefined,
           passwordSalt: row.password_salt || undefined,
+          passwordIterations: row.password_iterations || LEGACY_PASSWORD_ITERATIONS,
+          sessionVersion: row.session_version || 0,
           createdAt: row.created_at,
           lastLoginAt: row.last_login_at,
         };
@@ -416,7 +451,7 @@ export async function registerUserWithEmail(
   }
 
   const salt = generateSalt();
-  const hash = await hashPassword(password, salt);
+  const hash = await hashPassword(password, salt, PASSWORD_ITERATIONS);
   const now = new Date().toISOString();
   const newUserId = `vg_usr_${crypto.randomUUID().slice(0, 12)}`;
   const tenantId = `vg_tenant_${crypto.randomUUID().slice(0, 12)}`;
@@ -439,7 +474,7 @@ export async function registerUserWithEmail(
     try {
       const syntheticSub = `email:${normalizedEmail}`;
       await env.DB.prepare(
-        'INSERT INTO users (id, tenant_id, role, google_sub, auth_provider, email, display_name, password_hash, password_salt, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO users (id, tenant_id, role, google_sub, auth_provider, email, display_name, password_hash, password_salt, password_iterations, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
         .bind(
           newUserId,
@@ -451,6 +486,7 @@ export async function registerUserWithEmail(
           finalDisplayName,
           hash,
           salt,
+          PASSWORD_ITERATIONS,
           now,
           now
         )
@@ -477,13 +513,21 @@ export async function loginUserWithEmail(
     return { error: '邮箱或密码错误，请重试' };
   }
 
-  const computedHash = await hashPassword(password, userRecord.passwordSalt);
-  if (computedHash !== userRecord.passwordHash) {
+  const iterations = userRecord.passwordIterations || LEGACY_PASSWORD_ITERATIONS;
+  const computedHash = await hashPassword(password, userRecord.passwordSalt, iterations);
+  if (!equalStrings(computedHash, userRecord.passwordHash)) {
     return { error: '邮箱或密码错误，请重试' };
   }
 
   const now = new Date().toISOString();
   if (env.DB) {
+    if (iterations < PASSWORD_ITERATIONS) {
+      // Upgrade the stored hash now that the password is known.
+      const salt = generateSalt();
+      const upgraded = await hashPassword(password, salt, PASSWORD_ITERATIONS);
+      await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ?, password_iterations = ? WHERE id = ?')
+        .bind(upgraded, salt, PASSWORD_ITERATIONS, userRecord.id).run();
+    }
     try {
       await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
         .bind(now, userRecord.id)
@@ -495,6 +539,21 @@ export async function loginUserWithEmail(
   userRecord.lastLoginAt = now;
 
   return { user: userRecord };
+}
+
+/**
+ * Sets a new password for the account of a verified email and voids its sessions.
+ * Returns false when no account has that email.
+ */
+export async function resetPassword(env: Env, email: string, password: string): Promise<boolean> {
+  const user = await getUserByEmail(env, email);
+  if (!user) return false;
+  const salt = generateSalt();
+  const hash = await hashPassword(password, salt, PASSWORD_ITERATIONS);
+  await requireDatabase(env).prepare(
+    "UPDATE users SET password_hash = ?, password_salt = ?, password_iterations = ?, session_version = session_version + 1, auth_provider = COALESCE(auth_provider, 'email') WHERE id = ?"
+  ).bind(hash, salt, PASSWORD_ITERATIONS, user.id).run();
+  return true;
 }
 
 export interface GitHubProfile {
@@ -522,7 +581,7 @@ export async function getOrCreateGitHubUser(
   if (env.DB) {
     try {
       const existing = await env.DB.prepare(
-        'SELECT id, tenant_id, role, google_sub, github_id, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE github_id = ? OR (google_sub = ?)'
+        'SELECT id, tenant_id, role, google_sub, github_id, email, display_name, avatar_url, session_version, created_at, last_login_at FROM users WHERE github_id = ? OR (google_sub = ?)'
       )
         .bind(githubId, `github:${githubId}`)
         .first<{
@@ -534,6 +593,7 @@ export async function getOrCreateGitHubUser(
           email: string;
           display_name: string | null;
           avatar_url: string | null;
+          session_version: number | null;
           created_at: string;
           last_login_at: string;
         }>();
@@ -556,7 +616,18 @@ export async function getOrCreateGitHubUser(
           avatarUrl: avatarUrl || existing.avatar_url || undefined,
           createdAt: existing.created_at,
           lastLoginAt: now,
+          sessionVersion: existing.session_version || 0,
         };
+      }
+
+      if (profile.email) {
+        // The verified email of an account without GitHub links GitHub to it: one account per person.
+        const linked = await linkableAccount(env, email, 'github');
+        if (linked) {
+          await env.DB.prepare('UPDATE users SET github_id = ?, last_login_at = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?')
+            .bind(githubId, now, avatarUrl || null, linked.id).run();
+          return { ...linked, githubId, lastLoginAt: now };
+        }
       }
 
       const newUserId = `vg_usr_${crypto.randomUUID().slice(0, 12)}`;
@@ -589,6 +660,20 @@ export async function getOrCreateGitHubUser(
 }
 
 /**
+ * The oldest account with this (provider-verified) email that has no identity of
+ * the provider yet: no github_id, or only a synthetic google_sub (email:/github:).
+ */
+async function linkableAccount(env: Env, email: string, provider: 'google' | 'github'): Promise<User | null> {
+  const unlinked = provider === 'github'
+    ? 'github_id IS NULL'
+    : "(google_sub LIKE 'email:%' OR google_sub LIKE 'github:%')";
+  const row = await requireDatabase(env).prepare(
+    `SELECT id FROM users WHERE LOWER(email) = ? AND ${unlinked} ORDER BY created_at, id LIMIT 1`
+  ).bind(email.toLowerCase().trim()).first<{ id: string }>();
+  return row ? getUserById(env, row.id) : null;
+}
+
+/**
  * Upserts a Google user in Cloudflare D1. Database errors fail authentication.
  */
 export async function getOrCreateUser(
@@ -601,7 +686,7 @@ export async function getOrCreateUser(
   if (env.DB) {
     try {
       const existing = await env.DB.prepare(
-        'SELECT id, tenant_id, role, google_sub, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE google_sub = ?'
+        'SELECT id, tenant_id, role, google_sub, email, display_name, avatar_url, session_version, created_at, last_login_at FROM users WHERE google_sub = ?'
       )
         .bind(profile.sub)
         .first<{
@@ -612,6 +697,7 @@ export async function getOrCreateUser(
           email: string;
           display_name: string | null;
           avatar_url: string | null;
+          session_version: number | null;
           created_at: string;
           last_login_at: string;
         }>();
@@ -634,7 +720,16 @@ export async function getOrCreateUser(
           avatarUrl: profile.picture || existing.avatar_url || undefined,
           createdAt: existing.created_at,
           lastLoginAt: now,
+          sessionVersion: existing.session_version || 0,
         };
+      }
+
+      // The verified email of an account without Google links Google to it: one account per person.
+      const linked = await linkableAccount(env, profile.email, 'google');
+      if (linked) {
+        await env.DB.prepare('UPDATE users SET google_sub = ?, last_login_at = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?')
+          .bind(profile.sub, now, profile.picture || null, linked.id).run();
+        return { ...linked, googleSub: profile.sub, lastLoginAt: now };
       }
 
       // Create new user with internal UUID
@@ -674,7 +769,7 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
   if (env.DB) {
     try {
       const row = await env.DB.prepare(
-        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, created_at, last_login_at FROM users WHERE id = ?'
+        'SELECT id, tenant_id, role, google_sub, github_id, auth_provider, email, display_name, avatar_url, session_version, created_at, last_login_at FROM users WHERE id = ?'
       )
         .bind(userId)
         .first<{
@@ -687,6 +782,7 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
           email: string;
           display_name: string | null;
           avatar_url: string | null;
+          session_version: number | null;
           created_at: string;
           last_login_at: string;
         }>();
@@ -706,6 +802,7 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
           avatarUrl: row.avatar_url || undefined,
           createdAt: row.created_at,
           lastLoginAt: row.last_login_at,
+          sessionVersion: row.session_version || 0,
         };
       }
     } catch (err) {
@@ -714,6 +811,18 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
   }
 
   return null;
+}
+
+/**
+ * The user of a valid session cookie whose session version is current; null otherwise
+ * (no or forged cookie, expired, deleted user, or a password reset since sign-in).
+ */
+export async function getSessionUser(env: Env, cookieHeader: string | null): Promise<User | null> {
+  const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
+  if (!session) return null;
+  const user = await getUserById(env, session.userId);
+  if (!user || (session.sv || 0) !== (user.sessionVersion || 0)) return null;
+  return user;
 }
 
 /**

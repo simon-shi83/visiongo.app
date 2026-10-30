@@ -4,6 +4,10 @@
   "main": "worker/index.ts",
   "compatibility_date": "2024-11-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Canonical origin of the international edition. The China edition sets
+  // PUBLIC_ORIGIN=https://visiongo.com.cn in deploy/visiongo-website.service.
+  // Sign-in with Google and GitHub only (GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET as secrets).
+  "vars": { "PUBLIC_ORIGIN": "https://visiongo.app", "AUTH_METHODS": "google,github" },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

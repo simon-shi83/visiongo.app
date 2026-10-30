@@ -14,7 +14,7 @@ export function SeoHead({ title, description, canonicalPath = '/', noindex = fal
       if (!element) { element = document.createElement('meta'); element.setAttribute(attr, key); document.head.appendChild(element); }
       element.setAttribute('content', value);
     };
-    const url = `https://visiongo.app${localizedPath(canonicalPath, locale)}`;
+    const url = `${window.location.origin}${localizedPath(canonicalPath, locale)}`;
     meta('title', fullTitle); meta('description', description); meta('robots', noindex ? 'noindex, follow' : 'index, follow');
     for (const key of ['og', 'twitter']) { meta(`${key}:title`, fullTitle, true); meta(`${key}:description`, description, true); meta(`${key}:url`, url, true); }
     meta('og:locale', locale === 'zh' ? 'zh_CN' : 'en_US', true);
@@ -24,7 +24,7 @@ export function SeoHead({ title, description, canonicalPath = '/', noindex = fal
     document.head.querySelectorAll('link[rel="alternate"][hreflang]').forEach(element => element.remove());
     if (!noindex) for (const language of ['en', 'zh', 'x-default'] as const) {
       const link = document.createElement('link'); link.rel = 'alternate'; link.hreflang = language === 'zh' ? 'zh-CN' : language;
-      link.href = `https://visiongo.app${localizedPath(canonicalPath, language === 'zh' ? 'zh' : 'en')}`; document.head.appendChild(link);
+      link.href = `${window.location.origin}${localizedPath(canonicalPath, language === 'zh' ? 'zh' : 'en')}`; document.head.appendChild(link);
     }
     document.head.querySelectorAll('script[type="application/ld+json"]').forEach(element => element.remove());
     if (!noindex) {

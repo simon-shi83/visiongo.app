@@ -9,6 +9,11 @@ dist-ssr/
 # Cloudflare Wrangler
 .wrangler/
 
+# China edition (deploy/): server bundle, local database and bundled Node runtime
+server-build/
+data/
+runtime/
+
 # Environment files
 .env
 .env.local

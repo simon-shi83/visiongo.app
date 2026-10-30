@@ -89,6 +89,8 @@ export interface User {
   avatarUrl?: string;
   createdAt: string;
   lastLoginAt: string;
+  /** Incremented when the password is reset; sessions of an older version are void. */
+  sessionVersion?: number;
 }
 
 export interface UserDownloadRecord {
@@ -105,6 +107,10 @@ export interface Env {
     fetch: (request: Request) => Promise<Response>;
   };
   DB?: D1Database;
+  /** Canonical origin of this edition, e.g. https://visiongo.app; unset in tests and local development. */
+  PUBLIC_ORIGIN?: string;
+  /** Language for visitors without a saved choice; the China edition sets 'zh'. Defaults to English. */
+  DEFAULT_LOCALE?: string;
   DOWNLOADS_ANALYTICS?: AnalyticsEngineDataset;
   DOWNLOAD_ANALYTICS_SECRET?: string;
   GITHUB_RELEASE_TOKEN?: string;
@@ -123,4 +129,19 @@ export interface Env {
   DESKTOP_TOKEN_PRIVATE_KEY?: string;
   DESKTOP_TOKEN_KEY_ID?: string;
   DESKTOP_TOKEN_ISSUER?: string;
+  /**
+   * Comma-separated web pages (exact URLs) that /auth/desktop may send an
+   * authorization code to, besides the VisionStudio loopback callback; e.g.
+   * the VisionCloud admin and organization panels of this edition.
+   */
+  PORTAL_REDIRECT_URIS?: string;
+  /**
+   * VisionCloud of this edition (https base URL), read for organization credits,
+   * ledger and usage (SDK credits contract). Empty: the edition has no VisionCloud.
+   */
+  CLOUD_API_URL?: string;
+  /** Sign-in methods of this edition, comma-separated: email, google, github. Unset: all. */
+  AUTH_METHODS?: string;
+  /** Sender of verification emails, e.g. "VISIONGO <no-reply@visiongo.com.cn>". Unset: no-reply@ the edition's host. */
+  EMAIL_FROM?: string;
 }

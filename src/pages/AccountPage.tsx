@@ -106,8 +106,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               </h3>
               <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
                 {locale === 'zh'
-                  ? '支持 Google、GitHub 快捷登录或工作邮箱验证码注册，同步管理工业软件发版历史与现场部署。'
-                  : 'Sign in with Google, GitHub, or your work email to access download history and industrial deployment packages.'}
+                  ? '登录后可管理组织与成员、查看云端额度与用量，以及软件下载记录。'
+                  : 'Sign in to manage your organizations and members, cloud credits and usage, and download history.'}
               </p>
             </div>
 

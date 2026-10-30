@@ -88,7 +88,7 @@ export const AboutPage: React.FC<AboutPageProps> = ({ onOpenContact }) => {
               {t.aboutPage.contactDesc}
             </p>
             <div className="pt-2 flex flex-col gap-1 text-xs font-mono text-zinc-400">
-              <span className="text-zinc-300">Target Domain: https://visiongo.app</span>
+              <span className="text-zinc-300">Websites: https://visiongo.app (International) · https://visiongo.com.cn (China)</span>
               <span>General: contact@visiongo.app</span>
               <span>Enterprise & Licensing: sales@visiongo.app</span>
               <span>Technical Support: support@visiongo.app</span>

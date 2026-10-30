@@ -24,7 +24,6 @@ import { effectiveRole, handleOrganizationApi, rememberTenant, resolveTenant, Re
 import {
   verifyGoogleIdToken,
   createSessionCookie,
-  verifySessionCookie,
   getOrCreateUser,
   getUserById,
   recordUserDownloadHistory,
@@ -43,11 +42,34 @@ import {
   registerUserWithEmail,
   loginUserWithEmail,
   getOrCreateGitHubUser,
+  getSessionUser,
+  passwordPolicyError,
+  resetPassword,
+  type CodePurpose,
 } from './auth';
+import { authMethods, methodDisabledResponse, methodEnabled } from './authMethods';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CODE_SENT = '验证码已发送至您的邮箱，10 分钟内有效';
 
 // Desktop sign-in endpoints of SDK/schemas/identity.json plus the legacy page flow.
 const DESKTOP_TOKEN_PATHS = new Set(['/api/auth/token', '/api/auth/refresh', '/api/auth/switch-tenant']);
 const DESKTOP_HEADERS = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
+
+/** PORTAL_REDIRECT_URIS as a list of absolute https URLs; anything else is ignored. */
+function portalRedirectUris(env: Env): string[] {
+  return (env.PORTAL_REDIRECT_URIS || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => {
+      try {
+        const parsed = new URL(item);
+        return parsed.protocol === 'https:' && parsed.href === item && !parsed.search && !parsed.hash;
+      } catch {
+        return false;
+      }
+    });
+}
 
 /** SDK IdentityErrorResponse. */
 function desktopError(status: number, error: string, description: string): Response {
@@ -80,6 +102,21 @@ async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTena
   return new Response(JSON.stringify(body), { status: 200, headers: DESKTOP_HEADERS });
 }
 
+/** Language the visitor picked with the language switcher (cookie `visiongo_locale`), if any. */
+function savedLocale(request: Request): 'en' | 'zh' | null {
+  const value = request.headers.get('Cookie')?.split(';').map(item => item.trim()).find(item => item.startsWith('visiongo_locale='))?.slice(16);
+  return value === 'en' || value === 'zh' ? value : null;
+}
+
+/** Sends visitors without a saved choice from an English URL to the Chinese one when the edition defaults to Chinese. */
+function defaultLocaleRedirect(request: Request, env: Env, url: URL): Response | null {
+  if (env.DEFAULT_LOCALE !== 'zh' || savedLocale(request) || url.searchParams.has('lang')) return null;
+  if (url.pathname === '/zh' || url.pathname.startsWith('/zh/')) return null;
+  return new Response(null, { status: 302, headers: {
+    Location: new URL(localizedPath(`${url.pathname}${url.search}`, 'zh'), url.origin).toString(),
+    'Cache-Control': 'no-store', Vary: 'Cookie' } });
+}
+
 async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -98,13 +135,12 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     const hostname = url.hostname.toLowerCase();
     const forwardedProto = request.headers.get('x-forwarded-proto') || (url.protocol ? url.protocol.replace(':', '') : 'https');
     
-    // In production, force HTTPS and root domain visiongo.app
-    const isProductionCustomDomain = hostname === 'www.visiongo.app' || hostname === 'visiongo.app';
-    if (isProductionCustomDomain && (hostname === 'www.visiongo.app' || forwardedProto === 'http')) {
-      const redirectUrl = new URL(request.url);
-      redirectUrl.hostname = 'visiongo.app';
-      redirectUrl.protocol = 'https:';
-      return Response.redirect(redirectUrl.toString(), 301);
+    // Each edition redirects www and plain HTTP to its configured canonical origin.
+    if (env.PUBLIC_ORIGIN) {
+      const canonical = new URL(env.PUBLIC_ORIGIN);
+      if (hostname === `www.${canonical.hostname}` || (hostname === canonical.hostname && forwardedProto !== canonical.protocol.slice(0, -1))) {
+        return Response.redirect(new URL(`${url.pathname}${url.search}`, canonical.origin).toString(), 301);
+      }
     }
 
     // Redirect /index.html -> / (skip for internal worker/SPA fetches)
@@ -270,13 +306,12 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       }
 
       // Check if this download was initiated by an authenticated user
-      const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
-      if (session?.userId) {
+      const session = await getSessionUser(env, request.headers.get('Cookie'));
+      if (session) {
         // Associate download with user in D1 non-blockingly
         const recordUserTask = recordUserDownloadHistory(
           env,
-          session.userId,
+          session.id,
           productParam as SupportedProduct,
           result.version || 'unknown',
           result.filename
@@ -336,8 +371,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     if (url.pathname === '/api/auth/config' && request.method === 'GET') {
       return new Response(
         JSON.stringify({
-          googleClientId: env.GOOGLE_CLIENT_ID || null,
-          githubClientId: env.GITHUB_CLIENT_ID || null,
+          methods: authMethods(env),
+          googleClientId: methodEnabled(env, 'google') ? env.GOOGLE_CLIENT_ID || null : null,
+          githubClientId: methodEnabled(env, 'github') ? env.GITHUB_CLIENT_ID || null : null,
+          // Pages /auth/desktop may return an authorization code to (exact match).
+          portalRedirectUris: portalRedirectUris(env),
         }),
         {
           status: 200,
@@ -349,58 +387,65 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       );
     }
 
-    // POST /api/auth/email/send-code - Send 6-digit verification code to email
+    // POST /api/auth/email/send-code - Send a 6-digit code for sign-up (register) or password reset (reset).
     if (url.pathname === '/api/auth/email/send-code' && request.method === 'POST') {
+      if (!methodEnabled(env, 'email')) return methodDisabledResponse();
       try {
         const body = (await request.json().catch(() => ({}))) as { email?: string; purpose?: string };
         const email = (body.email || '').trim().toLowerCase();
-        const purpose = body.purpose === 'login' ? 'login' : 'register';
+        const purpose: CodePurpose = body.purpose === 'reset' ? 'reset' : 'register';
 
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!email || !emailRegex.test(email)) {
-          return new Response(
-            JSON.stringify({ error: '请输入有效的邮箱地址' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
+        if (!email || !EMAIL_PATTERN.test(email) || email.length > 254) return json({ error: '请输入有效的邮箱地址' }, 400);
 
         if (!await allowRequest(env, 'email-code', email, 1, 60)) return json({ error: '请稍后再申请验证码' }, 429);
-        if (purpose === 'register') {
-          const existing = await getUserByEmail(env, email);
-          if (existing) {
-            return new Response(
-              JSON.stringify({ error: '该邮箱已被注册，请直接登录' }),
-              { status: 400, headers: { 'Content-Type': 'application/json' } }
-            );
-          }
-        }
+        if (!await allowRequest(env, 'email-code-hour', email, 5, 3600)) return json({ error: '验证码申请过于频繁，请一小时后再试' }, 429);
+        const address = request.headers.get('CF-Connecting-IP');
+        if (address && !await allowRequest(env, 'email-code-ip', address, 20, 3600)) return json({ error: '请求过于频繁，请稍后再试' }, 429);
+
+        const existing = await getUserByEmail(env, email);
+        if (purpose === 'register' && existing) return json({ error: '该邮箱已被注册，请直接登录' }, 400);
+        // Reset answers the same whether or not the email has an account.
+        if (purpose === 'reset' && !existing) return json({ success: true, message: CODE_SENT });
 
         const code = generateVerificationCode();
         await saveVerificationCode(env, email, code, purpose);
-        const delivered = await sendVerificationEmail(env, email, code);
+        const delivered = await sendVerificationEmail(env, email, code, purpose);
         if (!delivered.success) {
           await env.DB!.prepare('DELETE FROM email_verification_codes WHERE email = ? AND code = ?').bind(email, code).run();
           return json({ error: '验证码发送失败，请稍后重试' }, 503);
         }
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: '验证码已发送至您的邮箱，10分钟内有效',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
+        return json({ success: true, message: CODE_SENT });
       } catch (err) {
         console.error('[Send Code Error]:', err);
-        return new Response(
-          JSON.stringify({ error: '发送验证码失败，请稍后重试' }),
-          { status: 500, headers: { 'Content-Type': 'application/json' } }
-        );
+        return json({ error: '发送验证码失败，请稍后重试' }, 500);
+      }
+    }
+
+    // POST /api/auth/email/reset-password - New password for the account of a verified email.
+    if (url.pathname === '/api/auth/email/reset-password' && request.method === 'POST') {
+      if (!methodEnabled(env, 'email')) return methodDisabledResponse();
+      try {
+        const body = (await request.json().catch(() => ({}))) as { email?: string; code?: string; password?: string };
+        const email = (body.email || '').trim().toLowerCase();
+        const code = (body.code || '').trim();
+        const password = body.password || '';
+        if (!email || !code || !password) return json({ error: '邮箱、验证码和新密码为必填项' }, 400);
+        const weak = passwordPolicyError(password);
+        if (weak) return json({ error: weak }, 400);
+        if (!await allowRequest(env, 'email-reset', email, 10, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
+        if (!await verifyAndConsumeCode(env, email, code, 'reset') || !await resetPassword(env, email, password)) {
+          return json({ error: '验证码错误或已过期，请重新获取' }, 400);
+        }
+        return json({ success: true, message: '密码已重置，请使用新密码登录' });
+      } catch (err) {
+        console.error('[Reset Password Error]:', err);
+        return json({ error: '重置密码失败，请稍后重试' }, 500);
       }
     }
 
     // POST /api/auth/email/register - Register with verified email and password
     if (url.pathname === '/api/auth/email/register' && request.method === 'POST') {
+      if (!methodEnabled(env, 'email')) return methodDisabledResponse();
       try {
         const body = (await request.json().catch(() => ({}))) as {
           email?: string;
@@ -421,12 +466,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
           );
         }
 
-        if (password.length < 6) {
-          return new Response(
-            JSON.stringify({ error: '密码长度不能少于 6 位' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
+        const weak = passwordPolicyError(password);
+        if (weak) return json({ error: weak }, 400);
 
         if (!await allowRequest(env, 'email-register', email, 10, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
         const isCodeValid = await verifyAndConsumeCode(env, email, code, 'register');
@@ -482,6 +523,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // POST /api/auth/email/login - Authenticate with email & password
     if (url.pathname === '/api/auth/email/login' && request.method === 'POST') {
+      if (!methodEnabled(env, 'email')) return methodDisabledResponse();
       try {
         const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
         const email = (body.email || '').trim().toLowerCase();
@@ -495,6 +537,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         }
 
         if (!await allowRequest(env, 'email-login', email, 10, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
+        // Across emails too, so one address cannot try passwords on many accounts.
+        const address = request.headers.get('CF-Connecting-IP');
+        if (address && !await allowRequest(env, 'email-login-ip', address, 30, 600)) return json({ error: '尝试次数过多，请稍后重试' }, 429);
         const loginResult = await loginUserWithEmail(env, email, password);
         if (loginResult.error || !loginResult.user) {
           return new Response(
@@ -507,7 +552,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         const { cookieHeader } = await createSessionCookie(
           user.id,
           user.email,
-          env.SESSION_SECRET
+          env.SESSION_SECRET,
+          user.sessionVersion || 0
         );
 
         return new Response(
@@ -540,6 +586,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // Browser-bound, expiring, one-use GitHub OAuth state with PKCE.
     if (url.pathname === '/api/auth/github' && request.method === 'GET') {
+      if (!methodEnabled(env, 'github')) return methodDisabledResponse();
       const returnPath = safeReturnPath(url.searchParams.get('returnUrl'));
       if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET || !env.DB || !env.SESSION_SECRET) {
         const redirect = new URL(returnPath, url.origin);
@@ -555,6 +602,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     }
 
     if (url.pathname === '/api/auth/github/callback' && request.method === 'GET') {
+      if (!methodEnabled(env, 'github')) return methodDisabledResponse();
       const redirect = (path: string, error?: string, sessionCookie?: string) => {
         const destination = new URL(safeReturnPath(path), url.origin);
         if (error) destination.searchParams.set('auth_error', error);
@@ -588,7 +636,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         const email = emails.find(item => item.primary && item.verified) || emails.find(item => item.verified);
         if (!email) return redirect(returnPath, 'github_email_failed');
         const user = await getOrCreateGitHubUser(env, { ...profile, email: email.email });
-        const session = await createSessionCookie(user.id, user.githubId || user.email, env.SESSION_SECRET);
+        const session = await createSessionCookie(user.id, user.githubId || user.email, env.SESSION_SECRET, user.sessionVersion || 0);
         return redirect(returnPath, undefined, session.cookieHeader);
       } catch {
         console.error('[GitHub] OAuth callback failed');
@@ -598,6 +646,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // POST /api/auth/google - Verify Google ID token and establish session
     if (url.pathname === '/api/auth/google' && request.method === 'POST') {
+      if (!methodEnabled(env, 'google')) return methodDisabledResponse();
       try {
         const body = (await request.json()) as { credential?: string };
         if (!body.credential) {
@@ -622,7 +671,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         const { cookieHeader } = await createSessionCookie(
           user.id,
           user.googleSub!,
-          env.SESSION_SECRET
+          env.SESSION_SECRET,
+          user.sessionVersion || 0
         );
 
         return new Response(
@@ -655,17 +705,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // GET /api/auth/me - Retrieve current authenticated user
     if (url.pathname === '/api/auth/me' && request.method === 'GET') {
-      const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
-
-      if (!session) {
-        return new Response(JSON.stringify({ user: null }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      }
-
-      const user = await getUserById(env, session.userId);
+      const user = await getSessionUser(env, request.headers.get('Cookie'));
       if (!user) {
         return new Response(JSON.stringify({ user: null }), {
           status: 200,
@@ -707,15 +747,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // Authentication comes from the HttpOnly website session cookie. An optional
     // tenant_id selects the organization the desktop session acts in.
     if (url.pathname === '/api/auth/desktop-code' && request.method === 'POST') {
-      const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
-      if (!session) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      }
-      const user = await getUserById(env, session.userId);
+      const user = await getSessionUser(env, request.headers.get('Cookie'));
       if (!user) {
         return new Response(JSON.stringify({ error: 'Authenticated user no longer exists' }), {
           status: 401,
@@ -868,46 +900,6 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       }
     }
 
-    // POST /api/auth/desktop-token - Mint a short-lived Cloud access token (legacy page flow).
-    // Authentication comes exclusively from the HttpOnly website session cookie.
-    if (url.pathname === '/api/auth/desktop-token' && request.method === 'POST') {
-      const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
-      if (!session) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      }
-      const user = await getUserById(env, session.userId);
-      if (!user) {
-        return new Response(JSON.stringify({ error: 'Authenticated user no longer exists' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      }
-      try {
-        const resolved = await resolveTenant(env, user);
-        if (!resolved) throw new Error('No active organization');
-        const token = await createDesktopAccessToken(env, user, resolved.tenant);
-        return new Response(JSON.stringify({
-          access_token: token.accessToken,
-          token_type: 'Bearer',
-          expires_in: token.expiresIn,
-          tenant_id: token.tenantId,
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      } catch (err) {
-        console.error('[Desktop Token Error]:', err);
-        return new Response(JSON.stringify({ error: 'Desktop authorization is not configured' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        });
-      }
-    }
-
     // POST /api/auth/logout - Terminate session
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
       const expiredCookie = 'vg_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
@@ -926,8 +918,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // GET /api/user/downloads - Retrieve authenticated user's download history
     if (url.pathname === '/api/user/downloads' && request.method === 'GET') {
-      const cookieHeader = request.headers.get('Cookie');
-      const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
+      const session = await getSessionUser(env, request.headers.get('Cookie'));
 
       if (!session) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -936,7 +927,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         });
       }
 
-      const downloads = await getUserDownloadHistory(env, session.userId);
+      const downloads = await getUserDownloadHistory(env, session.id);
       return new Response(JSON.stringify({ success: true, downloads }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -960,7 +951,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // A. Handle robots.txt and sitemap.xml directly
     if (url.pathname === '/robots.txt') {
       const assetRes = await env.ASSETS.fetch(request);
-      if (assetRes.status >= 400) return new Response('User-agent: *\nAllow: /\nSitemap: https://visiongo.app/sitemap.xml\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      if (assetRes.status >= 400) return new Response(`User-agent: *\nAllow: /\nSitemap: ${url.origin}/sitemap.xml\n`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       const headers = new Headers(assetRes.headers);
       headers.set('Content-Type', 'text/plain; charset=utf-8');
       headers.set('Cache-Control', 'public, max-age=3600');
@@ -1009,6 +1000,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       if (url.searchParams.get('lang') === 'zh') {
         return Response.redirect(new URL(localizedPath(`${url.pathname}${url.search}`, 'zh'), url.origin).toString(), 301);
       }
+      const redirect = defaultLocaleRedirect(request, env, url);
+      if (redirect) return redirect;
       const locale = url.pathname === '/zh' || url.pathname.startsWith('/zh/') ? 'zh' : 'en';
       const plain = stripLocalePath(url.pathname);
       const snapshot = localizedPath(plain.startsWith('/downloads/') ? '/downloads' : plain, locale);
@@ -1023,6 +1016,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // E. Authenticated client application routes: /my, /account, /desktop/*
     if (url.pathname === '/my' || url.pathname === '/account' || url.pathname === '/auth/desktop') {
+      const redirect = defaultLocaleRedirect(request, env, url);
+      if (redirect) return redirect;
       const spaRes = await env.ASSETS.fetch(new Request(new URL(`${url.pathname}.html`, request.url)));
       if (spaRes.status !== 200) return json({ error: 'Account page unavailable.' }, 503);
       const headers = new Headers(spaRes.headers);

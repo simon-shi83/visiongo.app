@@ -10,8 +10,11 @@
     "test:seo": "node scripts/verify-seo.js",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
+    "build:server": "vite build --ssr worker/index.ts --outDir server-build",
+    "start:server": "node --env-file=.env deploy/server.mjs",
+    "deploy:cn": "deploy/deploy-cn.sh",
     "test": "npm run build && npm run test:worker",
-    "test:worker": "node scripts/worker.test.mjs && node scripts/organizations.test.mjs",
+    "test:worker": "node scripts/worker.test.mjs && node scripts/organizations.test.mjs && node scripts/deploy.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs"
   },
   "keywords": [

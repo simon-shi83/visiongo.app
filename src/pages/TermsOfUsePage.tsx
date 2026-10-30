@@ -41,8 +41,8 @@ export const TermsOfUsePage: React.FC = () => {
             </h3>
             <p>
               {locale === 'zh'
-                ? '欢迎访问 VISIONGO 官方网站（https://visiongo.app）。访问本网站、查阅技术资源或下载软件即表示您（“用户”或“被授权方”）无条件接受并同意遵守本使用条款。若您代表企业或机构访问，您声明并保证拥有充分授权代表该实体接受本条款。'
-                : 'Welcome to the official VISIONGO website (https://visiongo.app). By accessing this site, viewing technical documents, or downloading software packages, you agree to be bound by these Terms of Use. If you represent an entity, you warrant you have the authority to bind that entity.'}
+                ? '欢迎访问 VISIONGO 官方网站（国际版 https://visiongo.app、国内版 https://visiongo.com.cn）。访问本网站、查阅技术资源或下载软件即表示您（“用户”或“被授权方”）无条件接受并同意遵守本使用条款。若您代表企业或机构访问，您声明并保证拥有充分授权代表该实体接受本条款。'
+                : 'Welcome to the official VISIONGO website (https://visiongo.app internationally, https://visiongo.com.cn in China). By accessing this site, viewing technical documents, or downloading software packages, you agree to be bound by these Terms of Use. If you represent an entity, you warrant you have the authority to bind that entity.'}
             </p>
           </div>
 

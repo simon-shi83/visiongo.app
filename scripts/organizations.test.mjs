@@ -276,3 +276,104 @@ test('VisionCloud organizations import as invitations that activate on the next 
   assert.throws(() => buildImportSql({ organizations: [{ id: 'vg_tenant_x', name: 'x' }] }));
   assert.throws(() => buildImportSql({ organizations: [], members: [{ org_id: 'org_x', email: 'a@b.example', role: 'admin' }] }));
 });
+
+// ---------------------------------------------------------------------------
+// Organization credits read from VisionCloud (SDK schemas/credits.json).
+// ---------------------------------------------------------------------------
+
+const creditsGolden = name => {
+  const file = `../SDK/tests/golden/credits/${name}`;
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+};
+
+/** Runs action with fetch answering VisionCloud requests via cloud(url, init); records the requests. */
+async function withCloud(cloud, action) {
+  const original = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push({ url: String(url), authorization: new Headers(init.headers).get('Authorization') });
+    return cloud(String(url), init);
+  };
+  try { return { result: await action(), requests }; } finally { globalThis.fetch = original; }
+}
+
+const cloudJson = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+async function creditsSetup() {
+  const env = { ...environment(), CLOUD_API_URL: 'https://cloud.example.test/' };
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const boss = addUser(env, 'boss', 'boss@factory.example');
+  const bob = addUser(env, 'bob', 'bob@factory.example');
+  const eve = addUser(env, 'eve', 'eve@elsewhere.example');
+  const orgId = await enterprise(env, root.id);
+  await call(env, '/api/orgs', { cookie: await cookieFor(boss.id) });  // accept the admin invitation
+  await call(env, `/api/orgs/${orgId}/members`, { cookie: await cookieFor(boss.id), body: { email: 'bob@factory.example', role: 'member' } });
+  await call(env, '/api/orgs', { cookie: await cookieFor(bob.id) });
+  return { env, root, boss, bob, eve, orgId };
+}
+
+test('organization credits are unavailable without CLOUD_API_URL', async () => {
+  const env = environment();
+  const boss = addUser(env, 'boss', 'boss@factory.example');
+  const cookie = await cookieFor(boss.id);
+  assert.equal((await call(env, '/api/orgs', { cookie })).body.credits_available, false);
+  const response = await call(env, `/api/orgs/${boss.tenant}/credits`, { cookie });
+  assert.deepEqual([response.status, response.body.error], [404, 'credits_unavailable']);
+});
+
+test('administrators read the account with a token for that organization; members only their usage', async () => {
+  const { env, boss, bob, eve, orgId } = await creditsSetup();
+  const account = creditsGolden('account.json') || { tenant_id: orgId, opened: false, notices: [] };
+  const usage = creditsGolden('usage_summary.json') || { totals: {}, by_user: [], by_endpoint: [] };
+  const cloud = url => (url.includes('/usage') ? cloudJson({ ...usage, by_user: [{ ...usage.by_user[0], user_id: bob.id }] })
+                                               : url.includes('/transactions') ? cloudJson({ items: [] }) : cloudJson(account));
+
+  const admin = await withCloud(cloud, async () => [
+    await call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(boss.id) }),
+    await call(env, `/api/orgs/${orgId}/credits/transactions?type=consumption&limit=5&evil=1`, { cookie: await cookieFor(boss.id) }),
+  ]);
+  const [credits, ledger] = admin.result;
+  assert.equal(credits.status, 200);
+  assert.equal(credits.body.viewer_is_admin, true);
+  assert.equal(admin.requests[0].url, `https://cloud.example.test/v1/accounts/${orgId}`);
+  assert.equal(admin.requests[1].url, `https://cloud.example.test/v1/accounts/${orgId}/transactions?type=consumption&limit=5`);
+  const claims = await verifiedClaims(admin.requests[0].authorization.replace('Bearer ', ''));
+  assert.deepEqual([claims.sub, claims.tenant_id, claims.role], [boss.id, orgId, 'org_admin']);
+  assert.ok(claims.aud.includes('visioncloud'));
+  assert.equal(ledger.status, 200);
+  if (creditsGolden('account.json')) {
+    for (const key of Object.keys(credits.body)) assert.ok(key in account || key === 'viewer_is_admin', `unexpected field ${key}`);
+  }
+
+  const member = await withCloud(cloud, async () => [
+    await call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(bob.id) }),
+    await call(env, `/api/orgs/${orgId}/credits/usage?from=1&to=2`, { cookie: await cookieFor(bob.id) }),
+  ]);
+  const [denied, mine] = member.result;
+  assert.equal(denied.status, 403);
+  assert.equal(member.requests.length, 1);  // the account was never requested
+  assert.equal(mine.status, 200);
+  assert.equal(mine.body.viewer_is_admin, false);
+  assert.deepEqual(mine.body.users[bob.id], { name: 'bob', email: 'bob@factory.example' });
+  assert.equal((await verifiedClaims(member.requests[0].authorization.replace('Bearer ', ''))).role, 'member');
+
+  const outsider = await withCloud(cloud, async () => call(env, `/api/orgs/${orgId}/credits/usage`, { cookie: await cookieFor(eve.id) }));
+  assert.equal(outsider.result.status, 403);
+  assert.equal(outsider.requests.length, 0);
+});
+
+test('platform administrators read any organization; VisionCloud errors and outages are reported', async () => {
+  const { env, root, orgId } = await creditsSetup();
+  const ok = await withCloud(() => cloudJson({ tenant_id: orgId, opened: false, notices: [] }),
+                             async () => call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(root.id) }));
+  assert.equal(ok.result.status, 200);
+  assert.equal((await verifiedClaims(ok.requests[0].authorization.replace('Bearer ', ''))).role, 'super_admin');
+
+  const refused = await withCloud(() => cloudJson({ error: 'tenant_access_denied', error_description: 'x' }, 403),
+                                  async () => call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(root.id) }));
+  assert.deepEqual([refused.result.status, refused.result.body.error], [403, 'tenant_access_denied']);
+  for (const cloud of [() => cloudJson({ detail: 'boom' }, 500), () => { throw new TypeError('fetch failed'); }]) {
+    const down = await withCloud(cloud, async () => call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(root.id) }));
+    assert.deepEqual([down.result.status, down.result.body.error], [502, 'cloud_unavailable']);
+  }
+});

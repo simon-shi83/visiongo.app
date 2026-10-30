@@ -9,8 +9,11 @@ export function isPublicPath(path: string): boolean {
   return routes.some(route => route.path === plain) || /^\/downloads\/(visionstudio|visionruntime|visionedge)(\/[^/]+)?$/.test(plain);
 }
 
+// Base for parsing site-relative paths only; never emitted.
+export const PATH_BASE = 'http://localhost';
+
 export function localizedPath(path: string, locale: 'en' | 'zh'): string {
-  const url = new URL(path, 'https://visiongo.app');
+  const url = new URL(path, PATH_BASE);
   const plain = stripLocalePath(url.pathname);
   if (isPublicPath(plain)) {
     url.pathname = locale === 'zh' ? (plain === '/' ? '/zh' : `/zh${plain}`) : plain;

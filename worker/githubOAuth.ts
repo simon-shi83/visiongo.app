@@ -1,5 +1,6 @@
 import type { Env } from './types';
 import { requireDatabase } from './reliability';
+import { PATH_BASE } from '../shared/routing';
 
 const COOKIE = '__Host-vg_github_state';
 const COOKIE_OPTIONS = 'Path=/; HttpOnly; Secure; SameSite=Lax';
@@ -7,7 +8,7 @@ export const clearGitHubStateCookie = `${COOKIE}=; ${COOKIE_OPTIONS}; Max-Age=0`
 
 export function safeReturnPath(value: string | null): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\r\n]/.test(value)) return '/my';
-  const parsed = new URL(value, 'https://visiongo.app');
+  const parsed = new URL(value, PATH_BASE);
   if (!['/my', '/account', '/auth/desktop'].includes(parsed.pathname)) return '/my';
   return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }

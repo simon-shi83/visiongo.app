@@ -19,6 +19,8 @@ export const DesktopAuthPage: React.FC = () => {
     state: string;
     codeChallenge?: string;
     codeChallengeMethod?: string;
+    // A configured web page (VisionCloud panel) rather than the VisionStudio loopback callback.
+    portal: boolean;
   } | null>(null);
   const [redirected, setRedirected] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -47,13 +49,25 @@ export const DesktopAuthPage: React.FC = () => {
     const codeChallenge = urlParams.get('code_challenge') || undefined;
     const codeChallengeMethod = urlParams.get('code_challenge_method') || undefined;
 
-    // Validate redirectUri matches loopback localhost pattern for security
-    if (redirectUri && !/^http:\/\/(127\.0\.0\.1|localhost):\d{4,5}\/visionxr\/login$/.test(redirectUri)) {
-      setErrorMsg('非法的重定向地址，必须为本机桌面客户端回环端口。');
+    const loopback = /^http:\/\/(127\.0\.0\.1|localhost):\d{4,5}\/visionxr\/login$/.test(redirectUri);
+    if (!redirectUri || loopback) {
+      setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: false });
       return;
     }
-
-    setParams({ redirectUri, state, codeChallenge, codeChallengeMethod });
+    // Web pages receive only an authorization code, so they must use PKCE (S256)
+    // and be listed exactly in the server's PORTAL_REDIRECT_URIS.
+    fetch('/api/auth/config')
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error('config'))))
+      .then((config: { portalRedirectUris?: string[] }) => {
+        if (!(config.portalRedirectUris || []).includes(redirectUri)) {
+          setErrorMsg('非法的重定向地址：必须为本机桌面客户端回环端口，或本站登记的管理后台地址。');
+        } else if (!codeChallenge || codeChallengeMethod !== 'S256' || !state) {
+          setErrorMsg('管理后台登录缺少 PKCE（S256）参数或 state。');
+        } else {
+          setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: true });
+        }
+      })
+      .catch(() => setErrorMsg('无法读取登录配置，请稍后重试'));
   }, []);
 
   const handleAuthorize = async () => {
@@ -80,22 +94,8 @@ export const DesktopAuthPage: React.FC = () => {
         }
         callbackUrl.searchParams.set('code', body.code);
       } else {
-        // Legacy flow fallback
-        const response = await fetch('/api/auth/desktop-token', { method: 'POST' });
-        const body = (await response.json()) as {
-          access_token?: string;
-          tenant_id?: string;
-          error?: string;
-        };
-        if (!response.ok || !body.access_token || !body.tenant_id) {
-          throw new Error(body.error || '网站未返回有效的桌面访问凭据');
-        }
-
-        callbackUrl.searchParams.set('user_id', user.id);
-        callbackUrl.searchParams.set('username', user.displayName || user.email.split('@')[0]);
-        callbackUrl.searchParams.set('email', user.email);
-        callbackUrl.searchParams.set('tenant_id', body.tenant_id);
-        callbackUrl.searchParams.set('access_token', body.access_token);
+        // Every client uses PKCE; the former token-in-URL flow was removed.
+        throw new Error('客户端未提供 PKCE 参数，请升级 VisionStudio 后重试');
       }
 
       setRedirected(true);
@@ -119,7 +119,7 @@ export const DesktopAuthPage: React.FC = () => {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-32 pb-24 flex items-center justify-center px-4">
       <SeoHead
         noindex
-        title="VisionStudio 授权登录 — VISIONGO"
+        title={params?.portal ? 'VisionCloud 管理后台登录 — VISIONGO' : 'VisionStudio 授权登录 — VISIONGO'}
         description="通过官方统一账号安全登录 VisionStudio 工业智能体桌面应用。"
         canonicalPath="/auth/desktop"
       />
@@ -131,10 +131,12 @@ export const DesktopAuthPage: React.FC = () => {
 
         <div>
           <h2 className="text-2xl font-bold text-white tracking-tight">
-            授权登录 VisionStudio
+            {params?.portal ? '登录 VisionCloud 管理后台' : '授权登录 VisionStudio'}
           </h2>
           <p className="text-zinc-400 text-xs mt-2">
-            授权后，VisionStudio 桌面客户端将同步您的云端身份与组织 Credits 配额。
+            {params?.portal
+              ? `授权后将返回 ${new URL(params.redirectUri).host} 的管理后台。`
+              : '授权后，VisionStudio 桌面客户端将同步您的云端身份与组织 Credits 配额。'}
           </p>
         </div>
 
@@ -153,14 +155,16 @@ export const DesktopAuthPage: React.FC = () => {
               <AuthCard onSuccess={() => {}} />
             </div>
             <p className="text-xs text-zinc-500">
-              登录成功后将自动返回 VisionStudio 客户端。
+              {params?.portal ? '登录成功后将自动返回管理后台。' : '登录成功后将自动返回 VisionStudio 客户端。'}
             </p>
           </div>
         ) : redirected ? (
           <div className="space-y-4 py-4">
             <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto animate-bounce" />
-            <p className="text-emerald-300 font-medium">✓ 授权成功！正在返回桌面应用...</p>
-            <p className="text-xs text-zinc-500">若浏览器未自动关闭，您可以安全关闭本标签页。</p>
+            <p className="text-emerald-300 font-medium">
+              {params?.portal ? '✓ 授权成功！正在返回管理后台...' : '✓ 授权成功！正在返回桌面应用...'}
+            </p>
+            {!params?.portal && <p className="text-xs text-zinc-500">若浏览器未自动关闭，您可以安全关闭本标签页。</p>}
           </div>
         ) : (
           <div className="space-y-5">

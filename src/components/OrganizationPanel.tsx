@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { CreditsPanel, type CreditsOrganization } from './CreditsPanel';
 
 interface Tenant {
   tenant_id: string;
@@ -47,6 +48,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
   const zh = locale === 'zh';
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [platformAdmin, setPlatformAdmin] = useState(false);
+  const [creditsAvailable, setCreditsAvailable] = useState(false);
   const [allOrganizations, setAllOrganizations] = useState<Organization[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -62,6 +64,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
     if (!ok) { setError(data.error || (zh ? '无法读取组织信息' : 'Could not load organizations')); return; }
     setTenants(data.tenants || []);
     setPlatformAdmin(!!data.is_platform_admin);
+    setCreditsAvailable(!!data.credits_available);
     setAllOrganizations(data.organizations || []);
   }, [zh]);
 
@@ -92,6 +95,18 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
   }
   if (platformAdmin) for (const org of allOrganizations) manageable.set(org.id, org.name);
 
+  // Credits: every organization of the user (members see their own usage), plus all for platform admins.
+  const creditOrganizations = new Map<string, CreditsOrganization>();
+  for (const tenant of tenants) {
+    creditOrganizations.set(tenant.tenant_id, { id: tenant.tenant_id, name: tenant.name, type: tenant.type,
+                                                admin: platformAdmin || tenant.role === 'org_admin' });
+  }
+  if (platformAdmin) {
+    for (const org of allOrganizations) {
+      if (!creditOrganizations.has(org.id)) creditOrganizations.set(org.id, { id: org.id, name: org.name, type: org.type, admin: true });
+    }
+  }
+
   const roleLabel = (role: string) => (role === 'admin' || role === 'org_admin'
     ? (zh ? '管理员' : 'Admin') : (zh ? '成员' : 'Member'));
 
@@ -102,8 +117,8 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
       <div className={card}>
         <h4 className={heading}>{zh ? '我所在的组织' : 'My organizations'}</h4>
         <p className="text-xs text-zinc-500">
-          {zh ? '在 VisionStudio 登录时选择组织；训练数据、模型和余额按组织隔离。'
-              : 'Choose an organization when signing in to VisionStudio; training data, models and balance are kept per organization.'}
+          {zh ? '在 VisionStudio 登录时选择组织；训练数据、模型和云端额度按组织隔离。'
+              : 'Choose an organization when signing in to VisionStudio; training data, models and cloud credits are kept per organization.'}
         </p>
         <div className="space-y-2">
           {tenants.map(tenant => (
@@ -120,6 +135,12 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
           ))}
         </div>
       </div>
+
+      {creditsAvailable ? (
+        tenants.length > 0 && <CreditsPanel locale={locale} organizations={[...creditOrganizations.values()]} />
+      ) : (
+        <p className="text-xs text-zinc-500">{zh ? '本版本尚未开通云端服务，暂无额度与用量。' : 'Cloud services are not available in this edition yet.'}</p>
+      )}
 
       {manageable.size > 0 && (
         <div className={card}>
