@@ -3,7 +3,7 @@
  *
  * The website is the only place that knows who belongs to which organization.
  * Desktop access tokens carry the organization the user selected, so
- * VisionCloud and VisionTrainer never look memberships up themselves.
+ * VisionCloud and VisionWeb never look memberships up themselves.
  *
  * - Every user has a personal organization (users.tenant_id) that they administer.
  * - Enterprise organizations are created by a platform administrator.

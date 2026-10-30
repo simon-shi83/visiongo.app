@@ -4,7 +4,7 @@
 
 ## 1. 定位
 
-- website 是用户、组织、成员关系和桌面访问令牌的唯一签发方。VisionStudio、VisionEdge、VisionCloud、VisionTrainer 只验证它签发的令牌，不保存密码，不维护第二套用户体系。
+- website 是用户、组织、成员关系和桌面访问令牌的唯一签发方。VisionStudio、VisionEdge、VisionCloud 以及 VisionWeb 的桌面端 API 只验证它签发的令牌，不保存密码，不维护第二套用户体系。VisionWeb 网页端原有的本地登录随网页标注一起逐步下线；在此之前，它的用户只能通过关联 website 账号接入桌面端。
 - 桌面登录与令牌接口的契约是 `SDK/schemas/identity.json`。website 是 TypeScript，不生成代码；改动必须通过 `SDK/tests/golden/identity/` 中样例的校验，契约变更按根目录第 3 节“SDK 先行”。
 
 ## 2. 两个版本

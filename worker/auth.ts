@@ -36,7 +36,7 @@ export interface DesktopAccessToken {
 }
 
 // Every service that accepts the desktop token; each one requires its own name.
-const DESKTOP_TOKEN_AUDIENCE = ['visioncloud', 'visiontrainer'];
+const DESKTOP_TOKEN_AUDIENCE = ['visioncloud', 'visionweb'];
 const DESKTOP_TOKEN_LIFETIME_SECONDS = 10 * 60;
 
 function base64Url(bytes: Uint8Array): string {

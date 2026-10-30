@@ -127,7 +127,7 @@ test('desktop token carries the selected organization, both audiences and the ef
   const chosen = await desktopLogin(env, boss.id, orgId);
   assert.equal(chosen.status, 200);
   const claims = await verifiedClaims(chosen.body.access_token);
-  assert.deepEqual(claims.aud, ['visioncloud', 'visiontrainer']);
+  assert.deepEqual(claims.aud, ['visioncloud', 'visionweb']);
   assert.equal(claims.sub, boss.id);
   assert.equal(claims.tenant_id, orgId);
   assert.equal(claims.tenant_name, '某工厂 A');
