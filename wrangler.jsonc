@@ -7,7 +7,19 @@
   // Canonical origin of the international edition. The China edition sets
   // PUBLIC_ORIGIN=https://visiongo.com.cn in deploy/visiongo-website.service.
   // Sign-in with Google and GitHub only (GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET as secrets).
+  // Every deploy replaces the variables with "vars" below: credentials set as plain
+  // dashboard variables are lost, so set them with `wrangler secret put`.
   "vars": { "PUBLIC_ORIGIN": "https://visiongo.app", "AUTH_METHODS": "google,github" },
+  // Bindings are also replaced on every deploy (CI deploys on push), so the
+  // international database stays declared here. The China edition uses SQLite.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "visiongo_db",
+      "database_id": "21da853e-bd5e-4620-a108-49dc34038612",
+      "migrations_dir": "migrations"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

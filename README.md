@@ -59,27 +59,16 @@ release versions, customer case metrics or performance guarantees. See
 
 ## Production configuration
 
-The checked-in Worker configuration intentionally contains no database ID or
-secrets. Before deploying, bind the real D1 database in `wrangler.jsonc`:
+`wrangler.jsonc` declares the international D1 database (`visiongo_db`) and its
+plain `vars`. Every `wrangler deploy` (CI deploys on each push to `main`) replaces
+the Worker's bindings and variables with that file, so a database binding or a
+credential added only as a plain dashboard variable disappears on the next deploy.
+Keep the database in `wrangler.jsonc` and set every credential as a secret.
 
-```jsonc
-"d1_databases": [{
-  "binding": "DB",
-  "database_name": "visiongo_db",
-  "database_id": "YOUR_EXISTING_DATABASE_ID",
-  "migrations_dir": "migrations"
-}]
-```
-
-If there is no database yet, create one with `wrangler d1 create visiongo_db` and
-use the returned ID. Apply **all** migrations in numeric order for a new database.
-For an existing installation already at 0003, apply 0004 before publishing this
-Worker. Prefer `wrangler d1 migrations apply visiongo_db --remote` when migrations
-are already tracked; if earlier migrations were applied via `d1 execute`, use the
-same tracking procedure and apply only the missing migration:
+Apply new migrations before publishing a Worker that needs them:
 
 ```bash
-pnpm exec wrangler d1 execute visiongo_db --remote --file=migrations/0004_website_reliability.sql
+pnpm exec wrangler d1 migrations apply visiongo_db --remote
 ```
 
 Required configuration by feature:
