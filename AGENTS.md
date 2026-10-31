@@ -27,7 +27,7 @@
 - **站点地址不写死**：两个版本只用 `PUBLIC_ORIGIN` 区分（国际版在 `wrangler.jsonc` 的 `vars`，国内版在 `deploy/visiongo-website.service`）。Worker 生成链接、回调和邮件中的地址时使用请求的 origin，规范域名跳转读 `PUBLIC_ORIGIN`；构建时的 canonical、hreflang、sitemap、robots 由 `scripts/site-origin.mjs` 取值，`index.html` 与 `public/` 中的绝对地址写成 `__SITE_ORIGIN__`。不得把 `visiongo.app` 或 `visiongo.com.cn` 作为站点地址写进业务代码。
 - **默认语言**：国内版在 `deploy/visiongo-website.service` 中设置 `DEFAULT_LOCALE=zh`，没有主动选择语言（Cookie `visiongo_locale`）的访问者从英文地址 302 到对应中文地址；国际版不设置，默认英文。
 - **迁移只追加**：`migrations/` 中已发布的文件不得修改。国内版启动时按顺序执行未执行过的迁移并校验已执行文件的 sha256，改动旧文件会导致服务无法启动；国际版用 `wrangler d1 migrations apply visiongo_db --remote`。
-- **令牌签名**：两个版本目前都使用 `iss=https://visiongo.app`、`kid=website-desktop-1`，但签名私钥各不相同（国内版 2026-10-28 起使用独立的生产密钥）。私钥只存在于各自的 `.env` 或 Cloudflare Secret，不得进入仓库或其他主机。各服务信任哪个版本、是否区分两个版本的签名，按 `docs/architecture/authentication.md` 执行。
+- **令牌签名**：两个版本使用各自的签名私钥与声明：国内版 `iss=https://visiongo.com.cn`、`kid=website-desktop-1`（2026-10-28 起独立生产密钥），国际版 `iss=https://visiongo.app`、`kid=website-intl-1`（2026-10-31 起）。私钥只存在于各自的 `.env` 或 Cloudflare Secret，不得进入仓库或其他主机。各服务信任哪个版本、是否区分两个版本的签名，按 `docs/architecture/authentication.md` 执行。
 
 ## 3. 开发与测试
 

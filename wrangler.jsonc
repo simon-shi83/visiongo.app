@@ -9,7 +9,8 @@
   // Sign-in with Google and GitHub only (GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET as secrets).
   // Every deploy replaces the variables with "vars" below: credentials set as plain
   // dashboard variables are lost, so set them with `wrangler secret put`.
-  "vars": { "PUBLIC_ORIGIN": "https://visiongo.app", "AUTH_METHODS": "google,github" },
+  // CLOUD_API_URL: the VisionCloud whose /v1/accounts holds this edition's organization credits.
+  "vars": { "PUBLIC_ORIGIN": "https://visiongo.app", "AUTH_METHODS": "google,github", "CLOUD_API_URL": "https://cloud.visiongo.com.cn" },
   // Bindings are also replaced on every deploy (CI deploys on push), so the
   // international database stays declared here. The China edition uses SQLite.
   "d1_databases": [
