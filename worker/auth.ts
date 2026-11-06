@@ -61,7 +61,8 @@ function pemToBytes(pem: string): Uint8Array {
  * Claims follow SDK IdentityAccessTokenClaims: tenant_id is the organization
  * and role the effective role in it (super_admin stays platform-wide).
  */
-export async function createDesktopAccessToken(env: Env, user: User, tenant: TenantSummary): Promise<DesktopAccessToken> {
+export async function createDesktopAccessToken(env: Env, user: User, tenant: TenantSummary,
+                                               aiDataAuthorized = false): Promise<DesktopAccessToken> {
   if (!env.DESKTOP_TOKEN_PRIVATE_KEY) {
     throw new Error('DESKTOP_TOKEN_PRIVATE_KEY is not configured');
   }
@@ -86,6 +87,8 @@ export async function createDesktopAccessToken(env: Env, user: User, tenant: Ten
     iat: now,
     exp: now + expiresIn,
     jti: crypto.randomUUID(),
+    // The organization's data authorization for VisionCloud AI (identity 2).
+    ai_data_authorized: aiDataAuthorized,
   };
   const encoder = new TextEncoder();
   const encodedHeader = base64Url(encoder.encode(JSON.stringify(header)));

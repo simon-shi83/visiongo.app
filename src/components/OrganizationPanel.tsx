@@ -14,6 +14,7 @@ interface Organization {
   name: string;
   type: 'personal' | 'enterprise';
   status: 'active' | 'suspended';
+  ai_data_authorized?: number;
 }
 
 interface Member {
@@ -52,6 +53,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
   const [allOrganizations, setAllOrganizations] = useState<Organization[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  const [selectedOrganization, setSelectedOrganization] = useState<Organization | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'member' | 'admin'>('member');
   const [newName, setNewName] = useState('');
@@ -72,6 +74,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
     const { ok, data } = await send(`/api/orgs/${encodeURIComponent(orgId)}/members`);
     if (!ok) { setError(data.error || (zh ? '无法读取成员' : 'Could not load members')); setMembers([]); return; }
     setMembers(data.members || []);
+    setSelectedOrganization(data.organization || null);
   }, [zh]);
 
   useEffect(() => { void load(); }, [load]);
@@ -91,7 +94,8 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
 
   const manageable = new Map<string, string>();
   for (const tenant of tenants) {
-    if (tenant.type === 'enterprise' && tenant.role === 'org_admin') manageable.set(tenant.tenant_id, tenant.name);
+    // A personal organization is managed only for its data authorization.
+    if (tenant.role === 'org_admin') manageable.set(tenant.tenant_id, tenant.name);
   }
   if (platformAdmin) for (const org of allOrganizations) manageable.set(org.id, org.name);
 
@@ -155,7 +159,29 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
             {[...manageable].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
 
-          {selected && (
+          {selected && selectedOrganization && (
+            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 text-xs">
+              <label className="flex items-center gap-2 text-zinc-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedOrganization.ai_data_authorized === 1}
+                  disabled={busy}
+                  onChange={event => {
+                    const authorized = event.target.checked;
+                    void run(() => send(`/api/orgs/${encodeURIComponent(selected)}/ai-data-authorization`, { authorized }),
+                             () => loadMembers(selected));
+                  }}
+                />
+                <span>{zh ? '允许 VisionCloud 使用本组织数据提供 AI 功能' : 'Let VisionCloud use this organization\'s data for AI'}</span>
+              </label>
+              <p className="text-[11px] text-zinc-500">
+                {zh ? '开启后，VisionCloud 的 AI 功能（流程规划、调参、专家问答、NG 分析、AI 建方案、脚本草稿）会使用本组织提交的问题、工作流结构与参数、变更记录及其结果、对回答的点评来生成建议并持续改进；数据只在本组织内使用，跨组织共享的只有去除名称和自由文本的调参与经验统计。关闭时以上 AI 功能全部不可用，工作流版本照常保存。设置在成员下次登录或令牌刷新（10 分钟内）后生效。'
+                    : 'When on, VisionCloud\'s AI functions (workflow planning, tuning, expert answers, NG analysis, AI solution drafts, script drafts) use the questions, workflow structure and parameters, change records with their results and the ratings of answers this organization submits, to make suggestions and improve them. The data is used within this organization; only tuning and experience statistics without names or free text are shared across organizations. When off, all these AI functions are unavailable; workflow versions are still kept. The setting applies after members sign in again or their token refreshes (within 10 minutes).'}
+              </p>
+            </div>
+          )}
+
+          {selected && selectedOrganization?.type !== 'personal' && (
             <>
               <form
                 className="flex flex-wrap gap-2"

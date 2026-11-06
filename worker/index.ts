@@ -79,7 +79,7 @@ function desktopError(status: number, error: string, description: string): Respo
 /** SDK IdentityTokenResponse for the resolved organization. */
 async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTenant,
                                     options: { refresh: boolean; remember: boolean }): Promise<Response> {
-  const token = await createDesktopAccessToken(env, user, resolved.tenant);
+  const token = await createDesktopAccessToken(env, user, resolved.tenant, resolved.aiDataAuthorized);
   const body: Record<string, unknown> = {
     access_token: token.accessToken,
     token_type: 'Bearer',
@@ -98,6 +98,7 @@ async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTena
     tenant_name: resolved.tenant.name,
     tenant_type: resolved.tenant.type,
     tenants: resolved.tenants,
+    ai_data_authorized: resolved.aiDataAuthorized,
   });
   return new Response(JSON.stringify(body), { status: 200, headers: DESKTOP_HEADERS });
 }

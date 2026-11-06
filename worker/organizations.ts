@@ -23,6 +23,8 @@ export interface OrganizationRow {
   name: string;
   type: 'personal' | 'enterprise';
   status: 'active' | 'suspended';
+  /** 1 when the organization lets VisionCloud use its data for AI (0007). */
+  ai_data_authorized?: number;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -88,6 +90,15 @@ export async function listTenants(env: Env, user: User): Promise<TenantSummary[]
 export interface ResolvedTenant {
   tenant: TenantSummary;
   tenants: TenantSummary[];
+  /** The selected organization's data authorization for VisionCloud AI (token claim ai_data_authorized). */
+  aiDataAuthorized: boolean;
+}
+
+/** Whether the organization lets VisionCloud use its data for AI; off unless an administrator turned it on. */
+export async function aiDataAuthorized(env: Env, orgId: string): Promise<boolean> {
+  const row = await requireDatabase(env).prepare('SELECT ai_data_authorized FROM organizations WHERE id = ?')
+    .bind(orgId).first<{ ai_data_authorized: number | null }>();
+  return row?.ai_data_authorized === 1;
 }
 
 /**
@@ -100,12 +111,12 @@ export async function resolveTenant(env: Env, user: User, requested?: string | n
   const find = (id?: string | null) => (id ? tenants.find(item => item.tenant_id === id) : undefined);
   if (requested) {
     const tenant = find(requested);
-    return tenant ? { tenant, tenants } : null;
+    return tenant ? { tenant, tenants, aiDataAuthorized: await aiDataAuthorized(env, tenant.tenant_id) } : null;
   }
   const row = await requireDatabase(env).prepare('SELECT last_tenant_id FROM users WHERE id = ?')
     .bind(user.id).first<{ last_tenant_id: string | null }>();
   const tenant = find(row?.last_tenant_id) || find(user.tenantId) || tenants[0];
-  return tenant ? { tenant, tenants } : null;
+  return tenant ? { tenant, tenants, aiDataAuthorized: await aiDataAuthorized(env, tenant.tenant_id) } : null;
 }
 
 export async function rememberTenant(env: Env, userId: string, tenantId: string): Promise<void> {
@@ -122,7 +133,7 @@ export function effectiveRole(user: User, tenant: TenantSummary): 'member' | 'or
 // ===========================================================================
 
 export async function loadOrganization(env: Env, orgId: string): Promise<OrganizationRow | null> {
-  return requireDatabase(env).prepare('SELECT id, name, type, status FROM organizations WHERE id = ?')
+  return requireDatabase(env).prepare('SELECT id, name, type, status, ai_data_authorized FROM organizations WHERE id = ?')
     .bind(orgId).first<OrganizationRow>();
 }
 
@@ -197,7 +208,7 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
     return json({ organization: { id, name, type: 'enterprise', status: 'active' } }, 201);
   }
 
-  const match = url.pathname.match(/^\/api\/orgs\/([A-Za-z0-9_-]{1,128})\/(members|members\/role|members\/remove|status)$/);
+  const match = url.pathname.match(/^\/api\/orgs\/([A-Za-z0-9_-]{1,128})\/(members|members\/role|members\/remove|status|ai-data-authorization)$/);
   if (!match) return json({ error: 'Not found' }, 404);
   const [, orgId, action] = match;
   const organization = await loadOrganization(env, orgId);
@@ -214,6 +225,18 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
        ORDER BY CASE m.role WHEN 'admin' THEN 0 ELSE 1 END, m.email`
     ).bind(orgId).all();
     return json({ organization, members: results || [] });
+  }
+
+  // The organization's administrators decide whether VisionCloud may use its data
+  // for AI; desktop tokens issued from now on carry the choice (ai_data_authorized).
+  if (action === 'ai-data-authorization' && request.method === 'POST') {
+    const authorized = (await readBody(request)).authorized;
+    if (typeof authorized !== 'boolean') return json({ error: 'authorized must be true or false' }, 400);
+    const timestamp = now();
+    await db.prepare('UPDATE organizations SET ai_data_authorized = ?, ai_data_authorized_at = ?, ai_data_authorized_by = ? WHERE id = ?')
+      .bind(authorized ? 1 : 0, timestamp, user.id, orgId).run();
+    await recordEvent(env, orgId, user.id, 'organization.ai_data_authorization', undefined, authorized ? 'on' : 'off');
+    return json({ organization: { ...organization, ai_data_authorized: authorized ? 1 : 0 } });
   }
 
   if (action === 'status' && request.method === 'POST') {

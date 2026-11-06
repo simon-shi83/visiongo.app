@@ -377,3 +377,47 @@ test('platform administrators read any organization; VisionCloud errors and outa
     assert.deepEqual([down.result.status, down.result.body.error], [502, 'cloud_unavailable']);
   }
 });
+
+test('data authorization for VisionCloud AI is off by default and set by the organization administrators', async () => {
+  const env = environment();
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const boss = addUser(env, 'boss', 'Boss@Factory.example');
+  const worker = addUser(env, 'worker', 'worker@factory.example');
+  const orgId = await enterprise(env, root.id);
+  const bossCookie = await cookieFor(boss.id);
+  await desktopLogin(env, boss.id);  // accepts the invitation
+  assert.equal((await call(env, `/api/orgs/${orgId}/members`, { cookie: bossCookie, body: { email: 'worker@factory.example', role: 'member' } })).status, 201);
+  await desktopLogin(env, worker.id);
+
+  // Off for a new organization: the token and the token response say so.
+  const before = await desktopLogin(env, worker.id, orgId);
+  assert.equal(before.body.ai_data_authorized, false);
+  assert.equal((await verifiedClaims(before.body.access_token)).ai_data_authorized, false);
+
+  // Members cannot change it; the value must be a boolean.
+  const workerCookie = await cookieFor(worker.id);
+  assert.equal((await call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie: workerCookie, body: { authorized: true } })).status, 403);
+  assert.equal((await call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie: bossCookie, body: { authorized: 'yes' } })).status, 400);
+
+  const turnedOn = await call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie: bossCookie, body: { authorized: true } });
+  assert.equal(turnedOn.status, 200);
+  assert.equal(turnedOn.body.organization.ai_data_authorized, 1);
+  const shown = await call(env, `/api/orgs/${orgId}/members`, { cookie: bossCookie });
+  assert.equal(shown.body.organization.ai_data_authorized, 1);
+  const after = await desktopLogin(env, worker.id, orgId);
+  assert.equal(after.body.ai_data_authorized, true);
+  assert.equal((await verifiedClaims(after.body.access_token)).ai_data_authorized, true);
+  const event = env.DB.sqlite.prepare("SELECT actor_user_id, detail FROM organization_events WHERE action = 'organization.ai_data_authorization'").get();
+  assert.deepEqual({ ...event }, { actor_user_id: boss.id, detail: 'on' });
+
+  // A personal organization's owner decides for it too.
+  const personal = await call(env, `/api/orgs/${worker.tenant}/ai-data-authorization`, { cookie: workerCookie, body: { authorized: true } });
+  assert.equal(personal.status, 200);
+});
+
+test('existing organizations are not authorized after the migration', () => {
+  const db = database(migrations.filter(file => file < '0007'));
+  db.sqlite.prepare("INSERT INTO organizations (id, name, type, status, created_at) VALUES ('org_old', '旧组织', 'enterprise', 'active', '2026-01-01')").run();
+  db.sqlite.exec(fs.readFileSync('migrations/0007_ai_data_authorization.sql', 'utf8'));
+  assert.equal(db.sqlite.prepare('SELECT ai_data_authorized FROM organizations').get().ai_data_authorized, 0);
+});
