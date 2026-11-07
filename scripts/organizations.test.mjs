@@ -179,14 +179,15 @@ test('a removed member can no longer refresh into the organization but can switc
   const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: session.body.refresh_token } });
   assert.equal(refreshed.status, 200);
   assert.equal(refreshed.body.tenant_id, orgId);
-  assert.equal(refreshed.body.refresh_token, undefined);
+  assert.notEqual(refreshed.body.refresh_token, session.body.refresh_token);  // rotated (identity 4)
 
   assert.equal((await call(env, `/api/orgs/${orgId}/members/remove`, { cookie: bossCookie, body: { email: 'alice@factory.example' } })).status, 200);
-  const revoked = await call(env, '/api/auth/refresh', { body: { refresh_token: session.body.refresh_token } });
+  const revoked = await call(env, '/api/auth/refresh', { body: { refresh_token: refreshed.body.refresh_token } });
   assert.equal(revoked.status, 403);
   assert.equal(revoked.body.error, 'tenant_access_revoked');
 
-  const back = await call(env, '/api/auth/switch-tenant', { body: { refresh_token: session.body.refresh_token, tenant_id: alice.tenant } });
+  // The refused refresh did not use the token up: it still switches back to the personal organization.
+  const back = await call(env, '/api/auth/switch-tenant', { body: { refresh_token: refreshed.body.refresh_token, tenant_id: alice.tenant } });
   assert.equal(back.status, 200);
   assert.equal(back.body.tenant_id, alice.tenant);
   assert.deepEqual(back.body.tenants.map(item => item.tenant_id), [alice.tenant]);
@@ -194,13 +195,89 @@ test('a removed member can no longer refresh into the organization but can switc
   assert.deepEqual(events.map(row => row.action), ['organization.created', 'member.invited', 'member.removed']);
 });
 
-test('refresh tokens issued before organizations stay bound to the personal organization', async () => {
+test('a refresh token that was never recorded is refused, even when correctly signed', async () => {
   const env = environment();
   const user = addUser(env, 'old', 'old@example.com');
-  const legacy = await auth.createDesktopRefreshToken({ id: user.id }, 'test-session-secret', undefined);
-  const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: legacy } });
-  assert.equal(refreshed.status, 200);
-  assert.equal(refreshed.body.tenant_id, user.tenant);
+  const unrecorded = await auth.createDesktopRefreshToken({ id: user.id }, 'test-session-secret', undefined);
+  const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: unrecorded } });
+  assert.deepEqual([refreshed.status, refreshed.body.error], [401, 'invalid_grant']);
+});
+
+test('refresh tokens rotate; a replayed one ends that sign-in but not the others', async () => {
+  const env = environment();
+  const user = addUser(env, 'rot', 'rot@example.com');
+  const first = await desktopLogin(env, user.id);
+  const other = await desktopLogin(env, user.id);  // a second computer
+  const rows = () => env.DB.sqlite.prepare('SELECT family_id, used_at, revoked_at FROM desktop_refresh_tokens').all();
+  assert.equal(new Set(rows().map(row => row.family_id)).size, 2);
+
+  const second = await call(env, '/api/auth/refresh', { body: { refresh_token: first.body.refresh_token } });
+  assert.equal(second.status, 200);
+  const third = await call(env, '/api/auth/refresh', { body: { refresh_token: second.body.refresh_token } });
+  assert.equal(third.status, 200);
+
+  // The first token is two rotations old: a copy of it is being replayed.
+  const replay = await call(env, '/api/auth/refresh', { body: { refresh_token: first.body.refresh_token } });
+  assert.deepEqual([replay.status, replay.body.error], [401, 'refresh_token_reused']);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: third.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: other.body.refresh_token } })).status, 200);
+});
+
+test('a refresh whose answer was lost is repeated within the grace period', async () => {
+  const env = environment();
+  const user = addUser(env, 'lost', 'lost@example.com');
+  const login = await desktopLogin(env, user.id);
+  const lost = await call(env, '/api/auth/refresh', { body: { refresh_token: login.body.refresh_token } });
+  assert.equal(lost.status, 200);
+  // The client never saw `lost` and presents its token again.
+  const again = await call(env, '/api/auth/refresh', { body: { refresh_token: login.body.refresh_token } });
+  assert.equal(again.status, 200);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: lost.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: again.body.refresh_token } })).status, 200);
+
+  // Past the grace period the same replay ends the sign-in.
+  const env2 = environment();
+  const late = addUser(env2, 'late', 'late@example.com');
+  const login2 = await desktopLogin(env2, late.id);
+  assert.equal((await call(env2, '/api/auth/refresh', { body: { refresh_token: login2.body.refresh_token } })).status, 200);
+  env2.DB.sqlite.prepare('UPDATE desktop_refresh_tokens SET used_at = ? WHERE used_at IS NOT NULL').run('2026-01-01T00:00:00.000Z');
+  assert.equal((await call(env2, '/api/auth/refresh', { body: { refresh_token: login2.body.refresh_token } })).body.error, 'refresh_token_reused');
+});
+
+test('desktop sign-ins are revoked from the desktop and from the account page', async () => {
+  const env = environment();
+  const user = addUser(env, 'dev', 'dev@example.com');
+  const cookie = await cookieFor(user.id);
+  const code = async name => {
+    const issued = await call(env, '/api/auth/desktop-code', { cookie, body: { code_challenge: challenge, code_challenge_method: 'S256' } });
+    return call(env, '/api/auth/token', { body: { grant_type: 'authorization_code', code: issued.body.code, code_verifier: verifier, device_name: name } });
+  };
+  const office = await code('OFFICE-PC');
+  const line = await code(' LINE-3\u0007 ');
+  const lab = await code('LAB');
+
+  const listed = await call(env, '/api/account/desktop-sessions', { cookie });
+  assert.deepEqual(listed.body.sessions.map(item => item.device_name).sort(), ['LAB', 'LINE-3', 'OFFICE-PC']);
+  assert.equal((await call(env, '/api/account/desktop-sessions')).status, 401);
+
+  // Sign-out on one computer.
+  const device = await call(env, '/api/auth/revoke', { body: { refresh_token: office.body.refresh_token, scope: 'device' } });
+  assert.deepEqual([device.status, device.body.revoked], [200, 1]);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: office.body.refresh_token } })).status, 401);
+
+  // The account page ends another; someone else's sign-in is not found.
+  const lineFamily = listed.body.sessions.find(item => item.device_name === 'LINE-3').family_id;
+  const stranger = addUser(env, 'stranger', 'stranger@example.com');
+  assert.equal((await call(env, '/api/account/desktop-sessions/revoke', { cookie: await cookieFor(stranger.id), body: { family_id: lineFamily } })).status, 404);
+  assert.equal((await call(env, '/api/account/desktop-sessions/revoke', { cookie, body: { family_id: lineFamily } })).body.revoked, 1);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: line.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: lab.body.refresh_token } })).status, 200);
+
+  // Everywhere.
+  const again = await code('LAB-2');
+  assert.equal((await call(env, '/api/auth/revoke', { body: { refresh_token: again.body.refresh_token, scope: 'all' } })).body.revoked, 2);
+  assert.deepEqual((await call(env, '/api/account/desktop-sessions', { cookie })).body.sessions, []);
+  assert.equal((await call(env, '/api/auth/revoke', { body: { refresh_token: 'vg_rf_forged', scope: 'all' } })).status, 401);
 });
 
 test('organization administration keeps an administrator and stays inside its permissions', async () => {

@@ -33,8 +33,6 @@ import {
   createDesktopAuthCode,
   verifyDesktopAuthCode,
   verifyPkceChallenge,
-  createDesktopRefreshToken,
-  verifyDesktopRefreshToken,
   generateVerificationCode,
   saveVerificationCode,
   verifyAndConsumeCode,
@@ -50,13 +48,14 @@ import {
 } from './auth';
 import { authMethods, methodDisabledResponse, methodEnabled } from './authMethods';
 import { handleReleaseAdmin, handleReleaseManifest } from './releases';
+import { deviceName, handleDesktopSessionApi, inspectRefreshToken, issueRefreshToken, revokeUserSessions, revokeWithRefreshToken, rotateRefreshToken } from './desktopSessions';
 import { withErrorCode } from './errorCodes';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_SENT = '验证码已发送至您的邮箱，10 分钟内有效';
 
 // Desktop sign-in endpoints of SDK/schemas/identity.json plus the legacy page flow.
-const DESKTOP_TOKEN_PATHS = new Set(['/api/auth/token', '/api/auth/refresh', '/api/auth/switch-tenant']);
+const DESKTOP_TOKEN_PATHS = new Set(['/api/auth/token', '/api/auth/refresh', '/api/auth/switch-tenant', '/api/auth/revoke']);
 const DESKTOP_HEADERS = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
 
 /** PORTAL_REDIRECT_URIS as a list of absolute https URLs; anything else is ignored. */
@@ -92,17 +91,16 @@ function cloudBaseUrl(env: Env): string | undefined {
 
 /** SDK IdentityTokenResponse for the resolved organization. */
 async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTenant,
-                                    options: { refresh: boolean; remember: boolean }): Promise<Response> {
+                                    options: { refreshToken: string; remember: boolean }): Promise<Response> {
   const token = await createDesktopAccessToken(env, user, resolved.tenant, resolved.aiDataAuthorized);
   const body: Record<string, unknown> = {
     access_token: token.accessToken,
     token_type: 'Bearer',
     expires_in: token.expiresIn,
     tenant_id: token.tenantId,
+    // identity 4: every answer carries the refresh token that replaces the presented one.
+    refresh_token: options.refreshToken,
   };
-  if (options.refresh) {
-    body.refresh_token = await createDesktopRefreshToken(user, env.SESSION_SECRET, resolved.tenant.tenant_id);
-  }
   if (options.remember) await rememberTenant(env, user.id, resolved.tenant.tenant_id);
   Object.assign(body, {
     user_id: user.id,
@@ -139,7 +137,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // Browser writes must originate from this site; desktop token contracts are unchanged.
     if (request.method === 'POST' && (url.pathname === '/api/contact' || url.pathname.startsWith('/api/auth/email/')
-        || url.pathname === '/api/orgs' || url.pathname.startsWith('/api/orgs/') || url.pathname.startsWith('/api/admin/'))) {
+        || url.pathname === '/api/orgs' || url.pathname.startsWith('/api/orgs/') || url.pathname.startsWith('/api/admin/')
+        || url.pathname.startsWith('/api/account/'))) {
       const origin = request.headers.get('Origin');
       if (origin && origin !== url.origin) return json({ error: 'Invalid request origin.' }, 403);
       const address = request.headers.get('CF-Connecting-IP');
@@ -465,6 +464,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         if (!await verifyAndConsumeCode(env, email, code, 'reset') || !await resetPassword(env, email, password)) {
           return json({ error: '验证码错误或已过期，请重新获取' }, 400);
         }
+        // A new password signs every desktop out as well.
+        const resetUser = await getUserByEmail(env, email);
+        if (resetUser) await revokeUserSessions(env, resetUser.id);
         return json({ success: true, message: '密码已重置，请使用新密码登录' });
       } catch (err) {
         console.error('[Reset Password Error]:', err);
@@ -835,6 +837,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
           code?: string;
           code_verifier?: string;
           tenant_id?: string;
+          device_name?: unknown;
         };
         if (body.grant_type !== 'authorization_code' || !body.code || !body.code_verifier) {
           return desktopError(400, 'invalid_request', 'grant_type=authorization_code, code, and code_verifier are required');
@@ -860,7 +863,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         if (!resolved) {
           return desktopError(403, 'invalid_tenant', 'The user is not an active member of the requested organization');
         }
-        return await desktopTokenResponse(env, user, resolved, { refresh: true, remember: true });
+        const refreshToken = await issueRefreshToken(env, user, resolved.tenant.tenant_id, deviceName(body.device_name));
+        return await desktopTokenResponse(env, user, resolved, { refreshToken, remember: true });
       } catch (err) {
         console.error('[Token Exchange Error]:', err);
         return desktopError(500, 'server_error', 'Failed to exchange authorization code');
@@ -878,22 +882,26 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
           return desktopError(400, 'invalid_request', 'refresh_token is required');
         }
 
-        const refreshPayload = await verifyDesktopRefreshToken(body.refresh_token, env.SESSION_SECRET);
-        if (!refreshPayload) {
-          return desktopError(401, 'invalid_grant', 'Refresh token is invalid or expired');
+        const inspected = await inspectRefreshToken(env, body.refresh_token);
+        if (!inspected.ok) {
+          return desktopError(401, inspected.error, inspected.description);
         }
 
-        const user = await getUserById(env, refreshPayload.userId);
+        const user = await getUserById(env, inspected.payload.userId);
         if (!user) {
           return desktopError(401, 'invalid_grant', 'User not found');
         }
 
         // Refresh tokens issued before organizations are bound to the personal organization.
-        const resolved = await resolveTenant(env, user, refreshPayload.tenantId || user.tenantId);
+        const resolved = await resolveTenant(env, user, inspected.payload.tenantId || user.tenantId);
         if (!resolved) {
           return desktopError(403, 'tenant_access_revoked', 'The user is no longer an active member of this organization');
         }
-        return await desktopTokenResponse(env, user, resolved, { refresh: false, remember: false });
+        const refreshToken = await rotateRefreshToken(env, user, inspected, resolved.tenant.tenant_id);
+        if (!refreshToken) {
+          return desktopError(401, 'invalid_grant', 'Refresh token was used by another request');
+        }
+        return await desktopTokenResponse(env, user, resolved, { refreshToken, remember: false });
       } catch (err) {
         console.error('[Token Refresh Error]:', err);
         return desktopError(500, 'server_error', 'Failed to refresh token');
@@ -910,11 +918,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         if (!body.refresh_token || !body.tenant_id) {
           return desktopError(400, 'invalid_request', 'refresh_token and tenant_id are required');
         }
-        const refreshPayload = await verifyDesktopRefreshToken(body.refresh_token, env.SESSION_SECRET);
-        if (!refreshPayload) {
-          return desktopError(401, 'invalid_grant', 'Refresh token is invalid or expired');
+        const inspected = await inspectRefreshToken(env, body.refresh_token);
+        if (!inspected.ok) {
+          return desktopError(401, inspected.error, inspected.description);
         }
-        const user = await getUserById(env, refreshPayload.userId);
+        const user = await getUserById(env, inspected.payload.userId);
         if (!user) {
           return desktopError(401, 'invalid_grant', 'User not found');
         }
@@ -922,10 +930,32 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         if (!resolved) {
           return desktopError(403, 'invalid_tenant', 'The user is not an active member of the requested organization');
         }
-        return await desktopTokenResponse(env, user, resolved, { refresh: true, remember: true });
+        const refreshToken = await rotateRefreshToken(env, user, inspected, resolved.tenant.tenant_id);
+        if (!refreshToken) {
+          return desktopError(401, 'invalid_grant', 'Refresh token was used by another request');
+        }
+        return await desktopTokenResponse(env, user, resolved, { refreshToken, remember: true });
       } catch (err) {
         console.error('[Switch Tenant Error]:', err);
         return desktopError(500, 'server_error', 'Failed to switch organization');
+      }
+    }
+
+    // POST /api/auth/revoke - End this computer's sign-in (scope device) or every desktop sign-in (all).
+    if (url.pathname === '/api/auth/revoke' && request.method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => ({}))) as { refresh_token?: string; scope?: string };
+        if (!body.refresh_token || (body.scope !== 'device' && body.scope !== 'all')) {
+          return desktopError(400, 'invalid_request', 'refresh_token and scope (device or all) are required');
+        }
+        const revoked = await revokeWithRefreshToken(env, body.refresh_token, body.scope);
+        if (revoked === null) {
+          return desktopError(401, 'invalid_grant', 'Refresh token is invalid or expired');
+        }
+        return new Response(JSON.stringify({ revoked }), { status: 200, headers: DESKTOP_HEADERS });
+      } catch (err) {
+        console.error('[Revoke Error]:', err);
+        return desktopError(500, 'server_error', 'Failed to revoke the sign-in');
       }
     }
 
@@ -942,6 +972,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     }
 
     // Organizations and members for the account page (session cookie).
+    const desktopSessionResponse = await handleDesktopSessionApi(request, env, url);
+    if (desktopSessionResponse) return desktopSessionResponse;
+
     const organizationResponse = await handleOrganizationApi(request, env, url);
     if (organizationResponse) return organizationResponse;
 

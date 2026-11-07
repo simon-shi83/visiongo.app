@@ -937,6 +937,8 @@ export interface DesktopAuthCodePayload {
   jti: string;
 }
 
+export const DESKTOP_REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 export interface DesktopRefreshTokenPayload {
   type: 'desktop_refresh_token';
   userId: string;
@@ -1005,18 +1007,21 @@ export async function verifyPkceChallenge(
   return false;
 }
 
+/** Signs a refresh token; desktopSessions.ts records it (a token without its row is refused). */
 export async function createDesktopRefreshToken(
-  user: User,
+  user: Pick<User, 'id'>,
   secretKey: string | undefined,
-  tenantId: string
+  tenantId: string,
+  jti: string = crypto.randomUUID(),
+  exp: number = Date.now() + DESKTOP_REFRESH_TOKEN_LIFETIME_MS
 ): Promise<string> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const payload: DesktopRefreshTokenPayload = {
     type: 'desktop_refresh_token',
     userId: user.id,
     tenantId,
-    exp: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
-    jti: crypto.randomUUID(),
+    exp,
+    jti,
   };
 
   const signed = await signHmacSha256(JSON.stringify(payload), secretKey);
