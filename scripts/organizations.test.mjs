@@ -572,3 +572,43 @@ test('error answers carry a registered code and keep the fields they had', async
   assert.equal(token.body.message, token.body.error_description);
   assert.ok(['INVALID_REQUEST', 'UNAUTHORIZED'].includes(token.body.code));
 });
+
+test('a change of the AI data authorization is reported to VisionCloud with a matching signed token', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  const cookie = await cookieFor(boss.id);
+  const sent = [];
+  const accept = (url, init) => {
+    sent.push({ url, body: JSON.parse(init.body) });
+    return cloudJson({ tenant_id: orgId, authorized: false, applied: true, retired_cards: 0, retired_skills: 0, withdrawn_shared_copies: 0 });
+  };
+  const off = await withCloud(accept, async () => call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie, body: { authorized: false } }));
+  assert.equal(off.result.status, 200);
+  assert.equal(off.result.body.organization.cloud_synced, true);
+  assert.equal(sent[0].url, `https://cloud.example.test/v1/accounts/${orgId}/ai-data-authorization`);
+  const saved = env.DB.sqlite.prepare('SELECT ai_data_authorized_at FROM organizations WHERE id = ?').get(orgId).ai_data_authorized_at;
+  assert.deepEqual(sent[0].body, { authorized: false, changed_at: Date.parse(saved) });
+  const claims = await verifiedClaims(off.requests[0].authorization.replace('Bearer ', ''));
+  assert.deepEqual([claims.sub, claims.tenant_id, claims.role, claims.ai_data_authorized], [boss.id, orgId, 'org_admin', false]);
+  if (fs.existsSync('../SDK/tests/golden/credits/ai_data_authorization_request.json')) {
+    const golden = JSON.parse(fs.readFileSync('../SDK/tests/golden/credits/ai_data_authorization_request.json', 'utf8'));
+    assert.deepEqual(Object.keys(sent[0].body).sort(), Object.keys(golden).sort());
+  }
+});
+
+test('an unconfirmed report is retried when an administrator opens the organization', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  const cookie = await cookieFor(boss.id);
+  const down = await withCloud(() => { throw new TypeError('fetch failed'); },
+                               async () => call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie, body: { authorized: true } }));
+  assert.equal(down.result.status, 200);  // the setting is saved anyway
+  assert.equal(down.result.body.organization.cloud_synced, false);
+  assert.equal(down.requests.length, 3);
+  const refused = await withCloud(() => cloudJson({ error: 'tenant_access_denied' }, 403),
+                                  async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.deepEqual([refused.result.body.organization.cloud_synced, refused.requests.length], [false, 1]);
+  const back = await withCloud(() => cloudJson({ tenant_id: orgId, authorized: true, applied: true, retired_cards: 0, retired_skills: 0, withdrawn_shared_copies: 0 }),
+                               async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.equal(back.result.body.organization.cloud_synced, true);
+  const again = await withCloud(() => { throw new Error('not asked again'); }, async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.deepEqual([again.result.body.organization.cloud_synced, again.requests.length], [true, 0]);
+});

@@ -13,7 +13,7 @@
 import type { Env, TenantSummary, User } from './types';
 import { json, requireDatabase } from './reliability';
 import { getSessionUser } from './auth';
-import { cloudApiUrl, handleCloudAccountApi } from './cloudAccounts';
+import { cloudApiUrl, handleCloudAccountApi, reportAiDataAuthorization, retryAiDataAuthorizationReport } from './cloudAccounts';
 
 type MemberRole = 'admin' | 'member';
 type MemberStatus = 'invited' | 'active' | 'removed';
@@ -224,11 +224,15 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
        WHERE m.org_id = ? AND m.status <> 'removed'
        ORDER BY CASE m.role WHEN 'admin' THEN 0 ELSE 1 END, m.email`
     ).bind(orgId).all();
-    return json({ organization, members: results || [] });
+    const sync = await db.prepare('SELECT ai_data_authorized_at, ai_data_authorization_synced_at FROM organizations WHERE id = ?')
+      .bind(orgId).first<{ ai_data_authorized_at: string | null; ai_data_authorization_synced_at: string | null }>();
+    const cloudSynced = sync ? await retryAiDataAuthorizationReport(env, user, orgId, sync) : null;
+    return json({ organization: { ...organization, cloud_synced: cloudSynced }, members: results || [] });
   }
 
   // The organization's administrators decide whether VisionCloud may use its data
-  // for AI; desktop tokens issued from now on carry the choice (ai_data_authorized).
+  // for AI; desktop tokens issued from now on carry the choice (ai_data_authorized),
+  // and VisionCloud is told at once (SDK credits 3).
   if (action === 'ai-data-authorization' && request.method === 'POST') {
     const authorized = (await readBody(request)).authorized;
     if (typeof authorized !== 'boolean') return json({ error: 'authorized must be true or false' }, 400);
@@ -236,7 +240,9 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
     await db.prepare('UPDATE organizations SET ai_data_authorized = ?, ai_data_authorized_at = ?, ai_data_authorized_by = ? WHERE id = ?')
       .bind(authorized ? 1 : 0, timestamp, user.id, orgId).run();
     await recordEvent(env, orgId, user.id, 'organization.ai_data_authorization', undefined, authorized ? 'on' : 'off');
-    return json({ organization: { ...organization, ai_data_authorized: authorized ? 1 : 0 } });
+    const cloudSynced = await reportAiDataAuthorization(env, user, orgId);
+    if (cloudSynced === false) await recordEvent(env, orgId, user.id, 'organization.ai_data_authorization_unconfirmed');
+    return json({ organization: { ...organization, ai_data_authorized: authorized ? 1 : 0, cloud_synced: cloudSynced } });
   }
 
   if (action === 'status' && request.method === 'POST') {

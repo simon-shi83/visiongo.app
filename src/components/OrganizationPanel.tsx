@@ -15,6 +15,8 @@ interface Organization {
   type: 'personal' | 'enterprise';
   status: 'active' | 'suspended';
   ai_data_authorized?: number;
+  /** Whether VisionCloud confirmed the current setting (null: this edition has no VisionCloud). */
+  cloud_synced?: boolean | null;
 }
 
 interface Member {
@@ -175,9 +177,15 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale }) 
                 <span>{zh ? '允许 VisionCloud 使用本组织数据提供 AI 功能' : 'Let VisionCloud use this organization\'s data for AI'}</span>
               </label>
               <p className="text-[11px] text-zinc-500">
-                {zh ? '开启后，VisionCloud 的 AI 功能（流程规划、调参、专家问答、NG 分析、AI 建方案、脚本草稿）会使用本组织提交的问题、工作流结构与参数、变更记录及其结果、对回答的点评来生成建议并持续改进；数据只在本组织内使用，跨组织共享的只有去除名称和自由文本的调参与经验统计。关闭时以上 AI 功能全部不可用，工作流版本照常保存；已从本组织学到的经验卡与技能立即停用，共享出去的统计在 24 小时内删除并留下删除记录。AI 使用明细保留 180 天，之后只保留不含内容的周度汇总；组织可随时要求立即删除全部 AI 数据。数据存放于中国境内的 VisionCloud；工位上 VisionEdge 的图像（回放集、复查图像）只保存在本地，不上传。设置在成员下次登录或令牌刷新（10 分钟内）后生效。'
-                    : 'When on, VisionCloud\'s AI functions (workflow planning, tuning, expert answers, NG analysis, AI solution drafts, script drafts) use the questions, workflow structure and parameters, change records with their results and the ratings of answers this organization submits, to make suggestions and improve them. The data is used within this organization; only tuning and experience statistics without names or free text are shared across organizations. When off, all these AI functions are unavailable; workflow versions are still kept; the experience cards and skills learned from this organization stop being used at once, and its shared statistics are deleted within 24 hours, with a record of the deletion. AI usage details are kept for 180 days, after that only weekly summaries without content; the organization may ask for all its AI data to be deleted at any time. The data is stored by VisionCloud in mainland China; images on a station\'s VisionEdge (replay sets, review images) stay on that station and are not uploaded. The setting applies after members sign in again or their token refreshes (within 10 minutes).'}
+                {zh ? '开启后，VisionCloud 的 AI 功能（流程规划、调参、专家问答、NG 分析、AI 建方案、脚本草稿）会使用本组织提交的问题、工作流结构与参数、变更记录及其结果、对回答的点评来生成建议并持续改进；数据只在本组织内使用，跨组织共享的只有去除名称和自由文本的调参与经验统计。关闭时以上 AI 功能全部不可用，工作流版本照常保存；已从本组织学到的经验卡与技能立即停用，共享出去的统计在 24 小时内删除并留下删除记录。AI 调用明细（提问、回答与变更记录的内容）保留 180 天，之后只保留不含内容的周度统计；用量与计费明细保留 3 年，之后只保留月度汇总；组织可随时要求立即删除全部 AI 数据。数据存放于中国境内的 VisionCloud；工位上 VisionEdge 的图像（回放集、复查图像）只保存在本地，不上传。更改会立即通知 VisionCloud；VisionCloud 暂时无法确认时，也会在成员下次登录或令牌刷新（10 分钟内）后生效。'
+                    : 'When on, VisionCloud\'s AI functions (workflow planning, tuning, expert answers, NG analysis, AI solution drafts, script drafts) use the questions, workflow structure and parameters, change records with their results and the ratings of answers this organization submits, to make suggestions and improve them. The data is used within this organization; only tuning and experience statistics without names or free text are shared across organizations. When off, all these AI functions are unavailable; workflow versions are still kept; the experience cards and skills learned from this organization stop being used at once, and its shared statistics are deleted within 24 hours, with a record of the deletion. AI call details (the questions, answers and change records) are kept for 180 days, after that only weekly statistics without content; usage and billing details are kept for 3 years, after that only monthly totals; the organization may ask for all its AI data to be deleted at any time. The data is stored by VisionCloud in mainland China; images on a station\'s VisionEdge (replay sets, review images) stay on that station and are not uploaded. A change is sent to VisionCloud at once; if VisionCloud cannot confirm it yet, it still applies after members sign in again or their token refreshes (within 10 minutes).'}
               </p>
+              {selectedOrganization.cloud_synced === false && (
+                <p className="text-[11px] text-amber-400">
+                  {zh ? '设置已保存，但 VisionCloud 暂未确认；下次打开本页时会自动重发。'
+                      : 'The setting is saved, but VisionCloud has not confirmed it yet; it is sent again the next time this page opens.'}
+                </p>
+              )}
             </div>
           )}
 
