@@ -109,6 +109,12 @@ export interface Env {
   DB?: D1Database;
   /** Canonical origin of this edition, e.g. https://visiongo.app; unset in tests and local development. */
   PUBLIC_ORIGIN?: string;
+  /**
+   * VisionCloud origin this edition's desktop clients should use (identity 3
+   * cloud_base_url), e.g. https://api.visiongo.com.cn; unset: the token
+   * response names none and clients keep their configured address.
+   */
+  CLOUD_BASE_URL?: string;
   /** Language for visitors without a saved choice; the China edition sets 'zh'. Defaults to English. */
   DEFAULT_LOCALE?: string;
   DOWNLOADS_ANALYTICS?: AnalyticsEngineDataset;

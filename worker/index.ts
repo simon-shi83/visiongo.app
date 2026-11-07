@@ -76,6 +76,17 @@ function desktopError(status: number, error: string, description: string): Respo
   return new Response(JSON.stringify({ error, error_description: description }), { status, headers: DESKTOP_HEADERS });
 }
 
+/** The configured VisionCloud origin (https only, no path); undefined when unset or malformed. */
+function cloudBaseUrl(env: Env): string | undefined {
+  if (!env.CLOUD_BASE_URL) return undefined;
+  try {
+    const url = new URL(env.CLOUD_BASE_URL);
+    return url.protocol === 'https:' && (url.pathname === '/' || url.pathname === '') ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** SDK IdentityTokenResponse for the resolved organization. */
 async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTenant,
                                     options: { refresh: boolean; remember: boolean }): Promise<Response> {
@@ -100,6 +111,8 @@ async function desktopTokenResponse(env: Env, user: User, resolved: ResolvedTena
     tenants: resolved.tenants,
     ai_data_authorized: resolved.aiDataAuthorized,
   });
+  const cloud = cloudBaseUrl(env);
+  if (cloud) body.cloud_base_url = cloud;
   return new Response(JSON.stringify(body), { status: 200, headers: DESKTOP_HEADERS });
 }
 

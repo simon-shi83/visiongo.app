@@ -247,10 +247,21 @@ test('token responses only use fields of the SDK identity contract', async (t) =
   if (!fs.existsSync(golden)) { t.skip('VisionAgent SDK is not checked out next to this repository'); return; }
   const contract = JSON.parse(fs.readFileSync(golden, 'utf8'));
   const env = environment();
+  env.CLOUD_BASE_URL = 'https://api.visiongo.com.cn';
   const user = addUser(env, 'u', 'u@example.com');
   const response = await desktopLogin(env, user.id);
   for (const key of Object.keys(response.body)) assert.ok(key in contract, `unexpected field ${key}`);
   for (const key of Object.keys(response.body.tenants[0])) assert.ok(key in contract.tenants[0], `unexpected tenant field ${key}`);
+});
+
+test('the edition names the VisionCloud its clients use only when configured', async () => {
+  const env = environment();
+  const user = addUser(env, 'c', 'c@example.com');
+  assert.equal((await desktopLogin(env, user.id)).body.cloud_base_url, undefined);
+  env.CLOUD_BASE_URL = 'https://api.visiongo.com.cn';
+  assert.equal((await desktopLogin(env, user.id)).body.cloud_base_url, 'https://api.visiongo.com.cn');
+  env.CLOUD_BASE_URL = 'http://api.visiongo.com.cn/v1';
+  assert.equal((await desktopLogin(env, user.id)).body.cloud_base_url, undefined);
 });
 
 test('VisionCloud organizations import as invitations that activate on the next sign-in', async () => {
