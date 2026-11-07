@@ -75,7 +75,7 @@ Required configuration by feature:
 
 | Configuration | Purpose |
 | --- | --- |
-| `DB` + migrations 0001–0004 | Accounts, codes, inquiries, notification outbox, OAuth states and rate limits |
+| `DB` + migrations 0001–0008 | Accounts, codes, inquiries, notification outbox, OAuth states and rate limits |
 | `SESSION_SECRET` | Signed website sessions and keyed abuse-limit digests |
 | `GITHUB_RELEASE_TOKEN` | Read-only token for real release metadata and binaries |
 | `GITHUB_ORG`, `VISIONSTUDIO_REPO`, `VISIONRUNTIME_REPO`, `VISIONEDGE_REPO` | Optional repository overrides |
@@ -84,6 +84,7 @@ Required configuration by feature:
 | `GOOGLE_CLIENT_ID` | Google sign-in audience validation |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub OAuth web application |
 | `DESKTOP_TOKEN_PRIVATE_KEY`, `DESKTOP_TOKEN_KEY_ID`, `DESKTOP_TOKEN_ISSUER` | Existing independent desktop-token signing configuration |
+| `DESKTOP_TOKEN_PUBLIC_KEYS` | Optional JSON array of earlier RSA public JWKs (with `kid`) still trusted during a key rotation |
 | `DOWNLOAD_ANALYTICS_SECRET`, `DOWNLOADS_ANALYTICS` | Existing optional download analytics |
 
 Set secrets with `pnpm exec wrangler secret put NAME`. Never put secrets in frontend
@@ -91,6 +92,22 @@ Set secrets with `pnpm exec wrangler secret put NAME`. Never put secrets in fron
 `auth@visiongo.app` and `contact@visiongo.app`. Configure GitHub's callback as
 `https://visiongo.app/api/auth/github/callback`. The public client IDs returned by
 `/api/auth/config` are not secrets.
+
+`/.well-known/jwks.json` publishes the public half of the current desktop-token
+key under `DESKTOP_TOKEN_KEY_ID`, then the keys of `DESKTOP_TOKEN_PUBLIC_KEYS`;
+VisionCloud reads it hourly, so a rotation publishes the new key before signing
+with it and keeps the old one listed until issued tokens have expired.
+
+Release manifests (SDK `releases.json`): `GET /api/releases/{studio|edge|runtime}?platform=windows-x64&channel=stable`
+answers the newest release and `min_supported` of that platform, read by VisionStudio at
+start and daily; below `min_supported` it turns VisionCloud AI off and asks for the upgrade.
+Rows live in the `release_manifests` table (migration 0008), separately in each edition;
+platform administrators list them with `GET /api/admin/releases` and publish one with
+`POST /api/admin/releases` (`product`, `platform`, `channel`, `latest`, `min_supported`,
+optional https `url` and `notes_url`, `sha256`). No row means 404 and clients change nothing.
+
+API error answers carry a code of SDK `errors.json` (`code`, `message`) beside their
+existing `error` field; desktop identity errors keep `error` and `error_description`.
 
 Downloads remain anonymous. Missing release credentials or provider failures are
 reported as unavailable; an empty successful release list is shown as no releases.

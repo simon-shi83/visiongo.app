@@ -116,6 +116,38 @@ export async function createDesktopAccessToken(env: Env, user: User, tenant: Ten
 /**
  * Verifies a Google ID token server-side.
  */
+/**
+ * The desktop token key set (RFC 7517) for /.well-known/jwks.json: the public
+ * half of the current signing key under DESKTOP_TOKEN_KEY_ID, then the earlier
+ * keys of DESKTOP_TOKEN_PUBLIC_KEYS. Malformed earlier keys are left out.
+ */
+export async function desktopTokenKeySet(env: Env): Promise<{ keys: Record<string, string>[] }> {
+  const keys: Record<string, string>[] = [];
+  if (env.DESKTOP_TOKEN_PRIVATE_KEY) {
+    const privateKey = await crypto.subtle.importKey('pkcs8', pemToBytes(env.DESKTOP_TOKEN_PRIVATE_KEY),
+                                                     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign']);
+    const jwk = await crypto.subtle.exportKey('jwk', privateKey) as JsonWebKey;
+    if (jwk.n && jwk.e) {
+      keys.push({ kty: 'RSA', kid: env.DESKTOP_TOKEN_KEY_ID || 'website-desktop-1', use: 'sig', alg: 'RS256',
+                  n: jwk.n, e: jwk.e });
+    }
+  }
+  let earlier: unknown = [];
+  try {
+    earlier = JSON.parse(env.DESKTOP_TOKEN_PUBLIC_KEYS || '[]');
+  } catch {
+    console.error('[JWKS] DESKTOP_TOKEN_PUBLIC_KEYS is not JSON');
+  }
+  for (const item of Array.isArray(earlier) ? earlier : []) {
+    const key = item as Record<string, unknown>;
+    if (key && key.kty === 'RSA' && typeof key.kid === 'string' && typeof key.n === 'string' && typeof key.e === 'string'
+        && !keys.some(existing => existing.kid === key.kid)) {
+      keys.push({ kty: 'RSA', kid: key.kid, use: 'sig', alg: 'RS256', n: key.n, e: key.e });
+    }
+  }
+  return { keys };
+}
+
 export async function verifyGoogleIdToken(
   idToken: string,
   expectedClientId?: string

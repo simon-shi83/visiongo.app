@@ -432,3 +432,66 @@ test('existing organizations are not authorized after the migration', () => {
   db.sqlite.exec(fs.readFileSync('migrations/0007_ai_data_authorization.sql', 'utf8'));
   assert.equal(db.sqlite.prepare('SELECT ai_data_authorized FROM organizations').get().ai_data_authorized, 0);
 });
+
+test('platform administrators publish release manifests that desktop clients read per platform', async () => {
+  const env = environment();
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const member = addUser(env, 'member', 'member@example.com');
+  const release = { product: 'edge', platform: 'windows-x64', latest: '6.2.0', min_supported: '6.1.0',
+                    url: 'https://visiongo.com.cn/downloads/visionedge', sha256: 'A'.repeat(64) };
+  assert.equal((await call(env, '/api/releases/edge?platform=windows-x64')).status, 404);
+  assert.equal((await call(env, '/api/admin/releases', { body: release })).status, 401);
+  assert.equal((await call(env, '/api/admin/releases', { cookie: await cookieFor(member.id), body: release })).status, 403);
+  const rootCookie = await cookieFor(root.id);
+  for (const bad of [{ ...release, product: 'visionedge' }, { ...release, latest: 'v6' }, { ...release, min_supported: '7.0.0' },
+                     { ...release, url: 'http://example.com/edge' }, { ...release, sha256: 'xyz' }]) {
+    assert.equal((await call(env, '/api/admin/releases', { cookie: rootCookie, body: bad })).status, 400, JSON.stringify(bad));
+  }
+  const published = await call(env, '/api/admin/releases', { cookie: rootCookie, body: release });
+  assert.equal(published.status, 200);
+  const read = await call(env, '/api/releases/edge?platform=windows-x64&channel=stable');
+  assert.equal(read.status, 200);
+  // SDK ReleaseManifest: snake_case wire names, the optional fields only when set.
+  assert.deepEqual(Object.keys(read.body).sort(), ['channel', 'latest', 'min_supported', 'platform', 'product', 'published_at', 'sha256', 'url']);
+  assert.equal(read.body.sha256, 'a'.repeat(64));
+  assert.equal((await call(env, '/api/releases/edge?platform=linux-x64')).status, 404);
+  assert.equal((await call(env, '/api/releases/edge')).status, 400);
+  await call(env, '/api/admin/releases', { cookie: rootCookie, body: { ...release, latest: '6.3.0', url: '' } });
+  const updated = await call(env, '/api/releases/edge?platform=windows-x64');
+  assert.equal(updated.body.latest, '6.3.0');
+  assert.equal(updated.body.url, undefined);
+  const listed = await call(env, '/api/admin/releases', { cookie: rootCookie });
+  assert.equal(listed.body.releases.length, 1);
+  assert.equal(listed.body.releases[0].updated_by, root.id);
+});
+
+test('the key set publishes the current signing key and the earlier ones of a rotation', async () => {
+  const env = { ...environment(), DESKTOP_TOKEN_KEY_ID: 'website-desktop-2',
+                DESKTOP_TOKEN_PUBLIC_KEYS: JSON.stringify([{ kty: 'RSA', kid: 'website-desktop-1', n: 'abc', e: 'AQAB' },
+                                                          { kty: 'EC', kid: 'bad' }]) };
+  const set = await call(env, '/.well-known/jwks.json');
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.body.keys.map(key => key.kid), ['website-desktop-2', 'website-desktop-1']);
+  assert.ok(set.body.keys.every(key => !('d' in key) && key.alg === 'RS256'));
+  const publicKey = await crypto.subtle.importKey('jwk', { kty: 'RSA', n: set.body.keys[0].n, e: set.body.keys[0].e },
+                                                  { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const token = (await desktopLogin(env, root.id)).body.access_token;
+  const [header, payload, signature] = token.split('.');
+  assert.equal(JSON.parse(base64UrlDecode(header).toString('utf8')).kid, 'website-desktop-2');
+  assert.ok(await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, base64UrlDecode(signature),
+                                       new TextEncoder().encode(`${header}.${payload}`)));
+});
+
+test('error answers carry a registered code and keep the fields they had', async () => {
+  const env = environment();
+  const missing = await call(env, '/api/no-such-route');
+  assert.deepEqual([missing.status, missing.body.code, missing.body.error], [404, 'NOT_FOUND', 'API route not found']);
+  const unauthorized = await call(env, '/api/orgs');
+  assert.deepEqual([unauthorized.body.code, unauthorized.body.message], ['UNAUTHORIZED', 'Unauthorized']);
+  // Identity errors keep the OAuth shape and add the code.
+  const token = await call(env, '/api/auth/token', { body: { grant_type: 'authorization_code', code: 'x', code_verifier: verifier } });
+  assert.equal(typeof token.body.error, 'string');
+  assert.equal(token.body.message, token.body.error_description);
+  assert.ok(['INVALID_REQUEST', 'UNAUTHORIZED'].includes(token.body.code));
+});

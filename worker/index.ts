@@ -29,6 +29,7 @@ import {
   recordUserDownloadHistory,
   getUserDownloadHistory,
   createDesktopAccessToken,
+  desktopTokenKeySet,
   createDesktopAuthCode,
   verifyDesktopAuthCode,
   verifyPkceChallenge,
@@ -48,6 +49,8 @@ import {
   type CodePurpose,
 } from './auth';
 import { authMethods, methodDisabledResponse, methodEnabled } from './authMethods';
+import { handleReleaseAdmin, handleReleaseManifest } from './releases';
+import { withErrorCode } from './errorCodes';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_SENT = '验证码已发送至您的邮箱，10 分钟内有效';
@@ -136,7 +139,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // Browser writes must originate from this site; desktop token contracts are unchanged.
     if (request.method === 'POST' && (url.pathname === '/api/contact' || url.pathname.startsWith('/api/auth/email/')
-        || url.pathname === '/api/orgs' || url.pathname.startsWith('/api/orgs/'))) {
+        || url.pathname === '/api/orgs' || url.pathname.startsWith('/api/orgs/') || url.pathname.startsWith('/api/admin/'))) {
       const origin = request.headers.get('Origin');
       if (origin && origin !== url.origin) return json({ error: 'Invalid request origin.' }, 403);
       const address = request.headers.get('CF-Connecting-IP');
@@ -199,6 +202,18 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         }
       );
     }
+
+    // Public keys of the desktop tokens, current and still trusted (VisionCloud reads them).
+    if (url.pathname === '/.well-known/jwks.json' && request.method === 'GET') {
+      return Response.json(await desktopTokenKeySet(env), { headers: { 'Cache-Control': 'public, max-age=300',
+                                                                        'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // Release manifests (SDK releases 1) and their maintenance by platform administrators.
+    const manifest = await handleReleaseManifest(request, env, url);
+    if (manifest) return manifest;
+    const releaseAdmin = await handleReleaseAdmin(request, env, url);
+    if (releaseAdmin) return releaseAdmin;
 
     // =========================================================================
     // 2. Releases API: GET /api/releases or GET /api/releases/:product
@@ -313,7 +328,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         return new Response(
           JSON.stringify({
             error: 'Release asset not found or download authorization unavailable.',
-            code: 'ASSET_NOT_FOUND',
+            code: 'NOT_FOUND',
           }),
           { status: 404, headers: { 'Content-Type': 'application/json' } }
         );
@@ -1057,8 +1072,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    try { return await handleRequest(request, env, ctx); }
-    catch { console.error('[Worker] Request failed'); return json({ error: 'Service temporarily unavailable. Please retry.' }, 503); }
+    try { return await withErrorCode(await handleRequest(request, env, ctx)); }
+    catch { console.error('[Worker] Request failed'); return withErrorCode(json({ error: 'Service temporarily unavailable. Please retry.' }, 503)); }
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if (!env.DB) return;
