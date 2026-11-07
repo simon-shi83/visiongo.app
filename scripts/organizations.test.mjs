@@ -612,3 +612,13 @@ test('an unconfirmed report is retried when an administrator opens the organizat
   const again = await withCloud(() => { throw new Error('not asked again'); }, async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
   assert.deepEqual([again.result.body.organization.cloud_synced, again.requests.length], [true, 0]);
 });
+
+test('credits use the VisionCloud the desktops are given when no server address is set', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  delete env.CLOUD_API_URL;
+  env.CLOUD_BASE_URL = 'https://api.example.test';
+  const read = await withCloud(() => cloudJson({ tenant_id: orgId, opened: false, notices: [] }),
+                               async () => call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(boss.id) }));
+  assert.equal(read.result.status, 200);
+  assert.equal(read.requests[0].url, `https://api.example.test/v1/accounts/${orgId}`);
+});

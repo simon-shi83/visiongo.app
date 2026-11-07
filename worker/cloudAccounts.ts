@@ -31,9 +31,13 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** VisionCloud base URL of this edition, or null when the edition has none. */
+/**
+ * VisionCloud base URL of this edition, or null when the edition has none.
+ * CLOUD_API_URL names it for the server; without it the address the desktop
+ * clients are given (CLOUD_BASE_URL) is the same VisionCloud.
+ */
 export function cloudApiUrl(env: Env): string | null {
-  const value = (env.CLOUD_API_URL || '').trim().replace(/\/+$/, '');
+  const value = (env.CLOUD_API_URL || env.CLOUD_BASE_URL || '').trim().replace(/\/+$/, '');
   if (!value) return null;
   try {
     return new URL(value).protocol === 'https:' || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(value) ? value : null;
