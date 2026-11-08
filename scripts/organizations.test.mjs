@@ -179,14 +179,15 @@ test('a removed member can no longer refresh into the organization but can switc
   const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: session.body.refresh_token } });
   assert.equal(refreshed.status, 200);
   assert.equal(refreshed.body.tenant_id, orgId);
-  assert.equal(refreshed.body.refresh_token, undefined);
+  assert.notEqual(refreshed.body.refresh_token, session.body.refresh_token);  // rotated (identity 4)
 
   assert.equal((await call(env, `/api/orgs/${orgId}/members/remove`, { cookie: bossCookie, body: { email: 'alice@factory.example' } })).status, 200);
-  const revoked = await call(env, '/api/auth/refresh', { body: { refresh_token: session.body.refresh_token } });
+  const revoked = await call(env, '/api/auth/refresh', { body: { refresh_token: refreshed.body.refresh_token } });
   assert.equal(revoked.status, 403);
   assert.equal(revoked.body.error, 'tenant_access_revoked');
 
-  const back = await call(env, '/api/auth/switch-tenant', { body: { refresh_token: session.body.refresh_token, tenant_id: alice.tenant } });
+  // The refused refresh did not use the token up: it still switches back to the personal organization.
+  const back = await call(env, '/api/auth/switch-tenant', { body: { refresh_token: refreshed.body.refresh_token, tenant_id: alice.tenant } });
   assert.equal(back.status, 200);
   assert.equal(back.body.tenant_id, alice.tenant);
   assert.deepEqual(back.body.tenants.map(item => item.tenant_id), [alice.tenant]);
@@ -194,13 +195,89 @@ test('a removed member can no longer refresh into the organization but can switc
   assert.deepEqual(events.map(row => row.action), ['organization.created', 'member.invited', 'member.removed']);
 });
 
-test('refresh tokens issued before organizations stay bound to the personal organization', async () => {
+test('a refresh token that was never recorded is refused, even when correctly signed', async () => {
   const env = environment();
   const user = addUser(env, 'old', 'old@example.com');
-  const legacy = await auth.createDesktopRefreshToken({ id: user.id }, 'test-session-secret', undefined);
-  const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: legacy } });
-  assert.equal(refreshed.status, 200);
-  assert.equal(refreshed.body.tenant_id, user.tenant);
+  const unrecorded = await auth.createDesktopRefreshToken({ id: user.id }, 'test-session-secret', undefined);
+  const refreshed = await call(env, '/api/auth/refresh', { body: { refresh_token: unrecorded } });
+  assert.deepEqual([refreshed.status, refreshed.body.error], [401, 'invalid_grant']);
+});
+
+test('refresh tokens rotate; a replayed one ends that sign-in but not the others', async () => {
+  const env = environment();
+  const user = addUser(env, 'rot', 'rot@example.com');
+  const first = await desktopLogin(env, user.id);
+  const other = await desktopLogin(env, user.id);  // a second computer
+  const rows = () => env.DB.sqlite.prepare('SELECT family_id, used_at, revoked_at FROM desktop_refresh_tokens').all();
+  assert.equal(new Set(rows().map(row => row.family_id)).size, 2);
+
+  const second = await call(env, '/api/auth/refresh', { body: { refresh_token: first.body.refresh_token } });
+  assert.equal(second.status, 200);
+  const third = await call(env, '/api/auth/refresh', { body: { refresh_token: second.body.refresh_token } });
+  assert.equal(third.status, 200);
+
+  // The first token is two rotations old: a copy of it is being replayed.
+  const replay = await call(env, '/api/auth/refresh', { body: { refresh_token: first.body.refresh_token } });
+  assert.deepEqual([replay.status, replay.body.error], [401, 'refresh_token_reused']);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: third.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: other.body.refresh_token } })).status, 200);
+});
+
+test('a refresh whose answer was lost is repeated within the grace period', async () => {
+  const env = environment();
+  const user = addUser(env, 'lost', 'lost@example.com');
+  const login = await desktopLogin(env, user.id);
+  const lost = await call(env, '/api/auth/refresh', { body: { refresh_token: login.body.refresh_token } });
+  assert.equal(lost.status, 200);
+  // The client never saw `lost` and presents its token again.
+  const again = await call(env, '/api/auth/refresh', { body: { refresh_token: login.body.refresh_token } });
+  assert.equal(again.status, 200);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: lost.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: again.body.refresh_token } })).status, 200);
+
+  // Past the grace period the same replay ends the sign-in.
+  const env2 = environment();
+  const late = addUser(env2, 'late', 'late@example.com');
+  const login2 = await desktopLogin(env2, late.id);
+  assert.equal((await call(env2, '/api/auth/refresh', { body: { refresh_token: login2.body.refresh_token } })).status, 200);
+  env2.DB.sqlite.prepare('UPDATE desktop_refresh_tokens SET used_at = ? WHERE used_at IS NOT NULL').run('2026-01-01T00:00:00.000Z');
+  assert.equal((await call(env2, '/api/auth/refresh', { body: { refresh_token: login2.body.refresh_token } })).body.error, 'refresh_token_reused');
+});
+
+test('desktop sign-ins are revoked from the desktop and from the account page', async () => {
+  const env = environment();
+  const user = addUser(env, 'dev', 'dev@example.com');
+  const cookie = await cookieFor(user.id);
+  const code = async name => {
+    const issued = await call(env, '/api/auth/desktop-code', { cookie, body: { code_challenge: challenge, code_challenge_method: 'S256' } });
+    return call(env, '/api/auth/token', { body: { grant_type: 'authorization_code', code: issued.body.code, code_verifier: verifier, device_name: name } });
+  };
+  const office = await code('OFFICE-PC');
+  const line = await code(' LINE-3\u0007 ');
+  const lab = await code('LAB');
+
+  const listed = await call(env, '/api/account/desktop-sessions', { cookie });
+  assert.deepEqual(listed.body.sessions.map(item => item.device_name).sort(), ['LAB', 'LINE-3', 'OFFICE-PC']);
+  assert.equal((await call(env, '/api/account/desktop-sessions')).status, 401);
+
+  // Sign-out on one computer.
+  const device = await call(env, '/api/auth/revoke', { body: { refresh_token: office.body.refresh_token, scope: 'device' } });
+  assert.deepEqual([device.status, device.body.revoked], [200, 1]);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: office.body.refresh_token } })).status, 401);
+
+  // The account page ends another; someone else's sign-in is not found.
+  const lineFamily = listed.body.sessions.find(item => item.device_name === 'LINE-3').family_id;
+  const stranger = addUser(env, 'stranger', 'stranger@example.com');
+  assert.equal((await call(env, '/api/account/desktop-sessions/revoke', { cookie: await cookieFor(stranger.id), body: { family_id: lineFamily } })).status, 404);
+  assert.equal((await call(env, '/api/account/desktop-sessions/revoke', { cookie, body: { family_id: lineFamily } })).body.revoked, 1);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: line.body.refresh_token } })).status, 401);
+  assert.equal((await call(env, '/api/auth/refresh', { body: { refresh_token: lab.body.refresh_token } })).status, 200);
+
+  // Everywhere.
+  const again = await code('LAB-2');
+  assert.equal((await call(env, '/api/auth/revoke', { body: { refresh_token: again.body.refresh_token, scope: 'all' } })).body.revoked, 2);
+  assert.deepEqual((await call(env, '/api/account/desktop-sessions', { cookie })).body.sessions, []);
+  assert.equal((await call(env, '/api/auth/revoke', { body: { refresh_token: 'vg_rf_forged', scope: 'all' } })).status, 401);
 });
 
 test('organization administration keeps an administrator and stays inside its permissions', async () => {
@@ -431,4 +508,117 @@ test('existing organizations are not authorized after the migration', () => {
   db.sqlite.prepare("INSERT INTO organizations (id, name, type, status, created_at) VALUES ('org_old', '旧组织', 'enterprise', 'active', '2026-01-01')").run();
   db.sqlite.exec(fs.readFileSync('migrations/0007_ai_data_authorization.sql', 'utf8'));
   assert.equal(db.sqlite.prepare('SELECT ai_data_authorized FROM organizations').get().ai_data_authorized, 0);
+});
+
+test('platform administrators publish release manifests that desktop clients read per platform', async () => {
+  const env = environment();
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const member = addUser(env, 'member', 'member@example.com');
+  const release = { product: 'edge', platform: 'windows-x64', latest: '6.2.0', min_supported: '6.1.0',
+                    url: 'https://visiongo.com.cn/downloads/visionedge', sha256: 'A'.repeat(64) };
+  assert.equal((await call(env, '/api/releases/edge?platform=windows-x64')).status, 404);
+  assert.equal((await call(env, '/api/admin/releases', { body: release })).status, 401);
+  assert.equal((await call(env, '/api/admin/releases', { cookie: await cookieFor(member.id), body: release })).status, 403);
+  const rootCookie = await cookieFor(root.id);
+  for (const bad of [{ ...release, product: 'visionedge' }, { ...release, latest: 'v6' }, { ...release, min_supported: '7.0.0' },
+                     { ...release, url: 'http://example.com/edge' }, { ...release, sha256: 'xyz' }]) {
+    assert.equal((await call(env, '/api/admin/releases', { cookie: rootCookie, body: bad })).status, 400, JSON.stringify(bad));
+  }
+  const published = await call(env, '/api/admin/releases', { cookie: rootCookie, body: release });
+  assert.equal(published.status, 200);
+  const read = await call(env, '/api/releases/edge?platform=windows-x64&channel=stable');
+  assert.equal(read.status, 200);
+  // SDK ReleaseManifest: snake_case wire names, the optional fields only when set.
+  assert.deepEqual(Object.keys(read.body).sort(), ['channel', 'latest', 'min_supported', 'platform', 'product', 'published_at', 'sha256', 'url']);
+  assert.equal(read.body.sha256, 'a'.repeat(64));
+  assert.equal((await call(env, '/api/releases/edge?platform=linux-x64')).status, 404);
+  assert.equal((await call(env, '/api/releases/edge')).status, 400);
+  await call(env, '/api/admin/releases', { cookie: rootCookie, body: { ...release, latest: '6.3.0', url: '' } });
+  const updated = await call(env, '/api/releases/edge?platform=windows-x64');
+  assert.equal(updated.body.latest, '6.3.0');
+  assert.equal(updated.body.url, undefined);
+  const listed = await call(env, '/api/admin/releases', { cookie: rootCookie });
+  assert.equal(listed.body.releases.length, 1);
+  assert.equal(listed.body.releases[0].updated_by, root.id);
+});
+
+test('the key set publishes the current signing key and the earlier ones of a rotation', async () => {
+  const env = { ...environment(), DESKTOP_TOKEN_KEY_ID: 'website-desktop-2',
+                DESKTOP_TOKEN_PUBLIC_KEYS: JSON.stringify([{ kty: 'RSA', kid: 'website-desktop-1', n: 'abc', e: 'AQAB' },
+                                                          { kty: 'EC', kid: 'bad' }]) };
+  const set = await call(env, '/.well-known/jwks.json');
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.body.keys.map(key => key.kid), ['website-desktop-2', 'website-desktop-1']);
+  assert.ok(set.body.keys.every(key => !('d' in key) && key.alg === 'RS256'));
+  const publicKey = await crypto.subtle.importKey('jwk', { kty: 'RSA', n: set.body.keys[0].n, e: set.body.keys[0].e },
+                                                  { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const token = (await desktopLogin(env, root.id)).body.access_token;
+  const [header, payload, signature] = token.split('.');
+  assert.equal(JSON.parse(base64UrlDecode(header).toString('utf8')).kid, 'website-desktop-2');
+  assert.ok(await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, base64UrlDecode(signature),
+                                       new TextEncoder().encode(`${header}.${payload}`)));
+});
+
+test('error answers carry a registered code and keep the fields they had', async () => {
+  const env = environment();
+  const missing = await call(env, '/api/no-such-route');
+  assert.deepEqual([missing.status, missing.body.code, missing.body.error], [404, 'NOT_FOUND', 'API route not found']);
+  const unauthorized = await call(env, '/api/orgs');
+  assert.deepEqual([unauthorized.body.code, unauthorized.body.message], ['UNAUTHORIZED', 'Unauthorized']);
+  // Identity errors keep the OAuth shape and add the code.
+  const token = await call(env, '/api/auth/token', { body: { grant_type: 'authorization_code', code: 'x', code_verifier: verifier } });
+  assert.equal(typeof token.body.error, 'string');
+  assert.equal(token.body.message, token.body.error_description);
+  assert.ok(['INVALID_REQUEST', 'UNAUTHORIZED'].includes(token.body.code));
+});
+
+test('a change of the AI data authorization is reported to VisionCloud with a matching signed token', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  const cookie = await cookieFor(boss.id);
+  const sent = [];
+  const accept = (url, init) => {
+    sent.push({ url, body: JSON.parse(init.body) });
+    return cloudJson({ tenant_id: orgId, authorized: false, applied: true, retired_cards: 0, retired_skills: 0, withdrawn_shared_copies: 0 });
+  };
+  const off = await withCloud(accept, async () => call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie, body: { authorized: false } }));
+  assert.equal(off.result.status, 200);
+  assert.equal(off.result.body.organization.cloud_synced, true);
+  assert.equal(sent[0].url, `https://cloud.example.test/v1/accounts/${orgId}/ai-data-authorization`);
+  const saved = env.DB.sqlite.prepare('SELECT ai_data_authorized_at FROM organizations WHERE id = ?').get(orgId).ai_data_authorized_at;
+  assert.deepEqual(sent[0].body, { authorized: false, changed_at: Date.parse(saved) });
+  const claims = await verifiedClaims(off.requests[0].authorization.replace('Bearer ', ''));
+  assert.deepEqual([claims.sub, claims.tenant_id, claims.role, claims.ai_data_authorized], [boss.id, orgId, 'org_admin', false]);
+  if (fs.existsSync('../SDK/tests/golden/credits/ai_data_authorization_request.json')) {
+    const golden = JSON.parse(fs.readFileSync('../SDK/tests/golden/credits/ai_data_authorization_request.json', 'utf8'));
+    assert.deepEqual(Object.keys(sent[0].body).sort(), Object.keys(golden).sort());
+  }
+});
+
+test('an unconfirmed report is retried when an administrator opens the organization', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  const cookie = await cookieFor(boss.id);
+  const down = await withCloud(() => { throw new TypeError('fetch failed'); },
+                               async () => call(env, `/api/orgs/${orgId}/ai-data-authorization`, { cookie, body: { authorized: true } }));
+  assert.equal(down.result.status, 200);  // the setting is saved anyway
+  assert.equal(down.result.body.organization.cloud_synced, false);
+  assert.equal(down.requests.length, 3);
+  const refused = await withCloud(() => cloudJson({ error: 'tenant_access_denied' }, 403),
+                                  async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.deepEqual([refused.result.body.organization.cloud_synced, refused.requests.length], [false, 1]);
+  const back = await withCloud(() => cloudJson({ tenant_id: orgId, authorized: true, applied: true, retired_cards: 0, retired_skills: 0, withdrawn_shared_copies: 0 }),
+                               async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.equal(back.result.body.organization.cloud_synced, true);
+  const again = await withCloud(() => { throw new Error('not asked again'); }, async () => call(env, `/api/orgs/${orgId}/members`, { cookie }));
+  assert.deepEqual([again.result.body.organization.cloud_synced, again.requests.length], [true, 0]);
+});
+
+test('credits use the VisionCloud the desktops are given when no server address is set', async () => {
+  const { env, boss, orgId } = await creditsSetup();
+  delete env.CLOUD_API_URL;
+  env.CLOUD_BASE_URL = 'https://api.example.test';
+  const read = await withCloud(() => cloudJson({ tenant_id: orgId, opened: false, notices: [] }),
+                               async () => call(env, `/api/orgs/${orgId}/credits`, { cookie: await cookieFor(boss.id) }));
+  assert.equal(read.result.status, 200);
+  assert.equal(read.requests[0].url, `https://api.example.test/v1/accounts/${orgId}`);
 });

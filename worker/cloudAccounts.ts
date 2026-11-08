@@ -31,9 +31,13 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** VisionCloud base URL of this edition, or null when the edition has none. */
+/**
+ * VisionCloud base URL of this edition, or null when the edition has none.
+ * CLOUD_API_URL names it for the server; without it the address the desktop
+ * clients are given (CLOUD_BASE_URL) is the same VisionCloud.
+ */
 export function cloudApiUrl(env: Env): string | null {
-  const value = (env.CLOUD_API_URL || '').trim().replace(/\/+$/, '');
+  const value = (env.CLOUD_API_URL || env.CLOUD_BASE_URL || '').trim().replace(/\/+$/, '');
   if (!value) return null;
   try {
     return new URL(value).protocol === 'https:' || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(value) ? value : null;
@@ -107,4 +111,61 @@ export async function handleCloudAccountApi(request: Request, env: Env, url: URL
     body.users = await usageUsers(env, body.by_user.map((row: { user_id: string }) => row.user_id).slice(0, 1000));
   }
   return json({ ...body, viewer_is_admin: admin });
+}
+
+const REPORT_ATTEMPTS = [0, 500, 1500];  // delays before each attempt, ms
+const REPORT_TIMEOUT_MS = 4_000;
+
+/**
+ * Reports the organization's AI data authorization to VisionCloud (SDK credits
+ * 3) with a token signed for the reporting administrator in that organization,
+ * whose ai_data_authorized claim says the same. Retried a few times; a report
+ * still unconfirmed is sent again when an administrator next opens the
+ * organization (retryAiDataAuthorizationReport). True once VisionCloud
+ * confirmed the setting now saved; null when the edition has no VisionCloud.
+ */
+export async function reportAiDataAuthorization(env: Env, user: User, orgId: string,
+                                                attempts: number[] = REPORT_ATTEMPTS): Promise<boolean | null> {
+  const base = cloudApiUrl(env);
+  if (!base) return null;
+  const db = requireDatabase(env);
+  const row = await db.prepare('SELECT ai_data_authorized, ai_data_authorized_at FROM organizations WHERE id = ?')
+    .bind(orgId).first<{ ai_data_authorized: number | null; ai_data_authorized_at: string | null }>();
+  const tenant = await tenantFor(env, user, orgId);
+  if (!row || !row.ai_data_authorized_at || !tenant) return false;
+  const authorized = row.ai_data_authorized === 1;
+  const body = JSON.stringify({ authorized, changed_at: Date.parse(row.ai_data_authorized_at) });
+  const target = `${base}/v1/accounts/${encodeURIComponent(orgId)}/ai-data-authorization`;
+
+  for (const delay of attempts) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      const token = await createDesktopAccessToken(env, user, tenant, authorized);
+      const response = await fetch(target, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token.accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body,
+        signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        // Confirmed for this change only: a newer change is reported by its own request.
+        await db.prepare('UPDATE organizations SET ai_data_authorization_synced_at = ? WHERE id = ? AND ai_data_authorized_at = ?')
+          .bind(new Date().toISOString(), orgId, row.ai_data_authorized_at).run();
+        return true;
+      }
+      console.warn(`[Cloud Accounts] AI data authorization report for ${orgId} refused with ${response.status}`);
+      if (response.status < 500 && response.status !== 429) return false;
+    } catch (error) {
+      console.warn(`[Cloud Accounts] AI data authorization report for ${orgId} failed:`, error);
+    }
+  }
+  return false;
+}
+
+/** Sends an unconfirmed report again; the organization row says whether one is pending. */
+export async function retryAiDataAuthorizationReport(env: Env, user: User, orgId: string,
+                                                     organization: { ai_data_authorized_at?: string | null; ai_data_authorization_synced_at?: string | null }): Promise<boolean | null> {
+  if (!cloudApiUrl(env) || !organization.ai_data_authorized_at) return null;
+  if (organization.ai_data_authorization_synced_at && organization.ai_data_authorization_synced_at >= organization.ai_data_authorized_at) return true;
+  return reportAiDataAuthorization(env, user, orgId, [0]);  // one attempt: the page is waiting
 }

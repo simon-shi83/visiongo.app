@@ -12,6 +12,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
 import { AuthCard } from '../components/AuthCard';
 import { OrganizationPanel } from '../components/OrganizationPanel';
+import { DesktopSessionsPanel } from '../components/DesktopSessionsPanel';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -218,6 +219,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
             {/* Tab 1: Profile Details */}
             {activeTab === 'profile' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
+                <DesktopSessionsPanel locale={locale} />
                 <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-4">
                   <h4 className="text-xs font-mono uppercase tracking-wider text-zinc-400 font-semibold">
                     {locale === 'zh' ? '账号安全与认证状态' : 'Security & Identity'}

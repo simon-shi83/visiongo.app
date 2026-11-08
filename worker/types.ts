@@ -136,6 +136,12 @@ export interface Env {
   DESKTOP_TOKEN_KEY_ID?: string;
   DESKTOP_TOKEN_ISSUER?: string;
   /**
+   * Earlier signing keys still trusted during a rotation, published at
+   * /.well-known/jwks.json beside the current one: a JSON array of RSA public
+   * JWKs, each with its kid ({"kty":"RSA","kid":"...","n":"...","e":"AQAB"}).
+   */
+  DESKTOP_TOKEN_PUBLIC_KEYS?: string;
+  /**
    * Comma-separated web pages (exact URLs) that /auth/desktop may send an
    * authorization code to, besides the VisionStudio loopback callback; e.g.
    * the VisionCloud admin and organization panels of this edition.
