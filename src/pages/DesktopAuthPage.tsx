@@ -21,8 +21,12 @@ export const DesktopAuthPage: React.FC = () => {
     codeChallengeMethod?: string;
     // A configured web page (VisionCloud panel) rather than the VisionStudio loopback callback.
     portal: boolean;
+    // prompt=login: the client asks for a fresh sign-in, not the browser's existing session.
+    reauth: boolean;
   } | null>(null);
   const [redirected, setRedirected] = useState(false);
+  // The session is older than prompt=login allows: the user must sign in again here.
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   // Organizations the desktop session may act in; null until loaded.
   const [tenants, setTenants] = useState<DesktopTenant[] | null>(null);
@@ -48,10 +52,11 @@ export const DesktopAuthPage: React.FC = () => {
     const state = urlParams.get('state') || '';
     const codeChallenge = urlParams.get('code_challenge') || undefined;
     const codeChallengeMethod = urlParams.get('code_challenge_method') || undefined;
+    const reauth = urlParams.get('prompt') === 'login';
 
     const loopback = /^http:\/\/(127\.0\.0\.1|localhost):\d{4,5}\/visionxr\/login$/.test(redirectUri);
     if (!redirectUri || loopback) {
-      setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: false });
+      setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: false, reauth });
       return;
     }
     // Web pages receive only an authorization code, so they must use PKCE (S256)
@@ -64,7 +69,7 @@ export const DesktopAuthPage: React.FC = () => {
         } else if (!codeChallenge || codeChallengeMethod !== 'S256' || !state) {
           setErrorMsg('管理后台登录缺少 PKCE（S256）参数或 state。');
         } else {
-          setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: true });
+          setParams({ redirectUri, state, codeChallenge, codeChallengeMethod, portal: true, reauth });
         }
       })
       .catch(() => setErrorMsg('无法读取登录配置，请稍后重试'));
@@ -86,9 +91,15 @@ export const DesktopAuthPage: React.FC = () => {
             code_challenge: params.codeChallenge,
             code_challenge_method: params.codeChallengeMethod || 'S256',
             ...(tenantId ? { tenant_id: tenantId } : {}),
+            // Five minutes, the lifetime of the code itself.
+            ...(params.reauth ? { max_age: 300 } : {}),
           }),
         });
         const body = (await response.json()) as { code?: string; error?: string };
+        if (response.status === 401 && body.error === 'login_required') {
+          setNeedsSignIn(true);
+          return;
+        }
         if (!response.ok || !body.code) {
           throw new Error(body.error || '获取桌面授权码失败');
         }
@@ -107,13 +118,13 @@ export const DesktopAuthPage: React.FC = () => {
 
   useEffect(() => {
     // Auto redirect only when there is no organization to choose.
-    if (user && params?.redirectUri && tenants && !choosesTenant && !redirected && !errorMsg) {
+    if (user && params?.redirectUri && tenants && !choosesTenant && !redirected && !errorMsg && !needsSignIn) {
       const timer = setTimeout(() => {
         void handleAuthorize();
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [user, params, tenants, choosesTenant, redirected, errorMsg]);
+  }, [user, params, tenants, choosesTenant, redirected, errorMsg, needsSignIn]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pt-32 pb-24 flex items-center justify-center px-4">
@@ -148,11 +159,13 @@ export const DesktopAuthPage: React.FC = () => {
           <div className="py-8 flex justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500" />
           </div>
-        ) : !user ? (
+        ) : !user || needsSignIn ? (
           <div className="space-y-4">
-            <p className="text-zinc-300 text-sm">请先登录或注册您的 VISIONGO 账号：</p>
+            <p className="text-zinc-300 text-sm">
+              {needsSignIn ? '客户端要求重新登录确认身份，请再次登录您的 VISIONGO 账号：' : '请先登录或注册您的 VISIONGO 账号：'}
+            </p>
             <div>
-              <AuthCard onSuccess={() => {}} />
+              <AuthCard onSuccess={() => setNeedsSignIn(false)} />
             </div>
             <p className="text-xs text-zinc-500">
               {params?.portal ? '登录成功后将自动返回管理后台。' : '登录成功后将自动返回 VisionStudio 客户端。'}
