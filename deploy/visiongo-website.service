@@ -13,9 +13,11 @@ Environment=PORT=8600
 Environment=PUBLIC_ORIGIN=https://visiongo.com.cn
 Environment=DEFAULT_LOCALE=zh
 # VisionCloud panels that sign in with this edition (see .env.example).
-Environment=PORTAL_REDIRECT_URIS=https://cloud.visiongo.com.cn/v1/admin
-# VisionCloud of this edition: organization credits, ledger and usage.
-Environment=CLOUD_API_URL=https://cloud.visiongo.com.cn
+Environment=PORTAL_REDIRECT_URIS=https://api.visiongo.com.cn/v1/admin,https://cloud.visiongo.com.cn/v1/admin
+# VisionCloud of this edition: organization credits, ledger and usage (CLOUD_API_URL),
+# and the address handed to Studio and Edge in desktop tokens (CLOUD_BASE_URL).
+Environment=CLOUD_API_URL=https://api.visiongo.com.cn
+Environment=CLOUD_BASE_URL=https://api.visiongo.com.cn
 # Email accounts only (verification codes via Resend: RESEND_API_KEY in .env).
 Environment=AUTH_METHODS=email
 Environment="EMAIL_FROM=VISIONGO <no-reply@visiongo.com.cn>"
