@@ -622,3 +622,21 @@ test('credits use the VisionCloud the desktops are given when no server address 
   assert.equal(read.result.status, 200);
   assert.equal(read.requests[0].url, `https://api.example.test/v1/accounts/${orgId}`);
 });
+
+test('prompt=login (max_age) refuses an old browser session until the user signs in again', async () => {
+  const env = environment();
+  const user = addUser(env, 'old', 'old@example.com');
+  const fresh = await cookieFor(user.id);
+  // A session signed in an hour ago, as the browser keeps it after an earlier visit.
+  const realNow = Date.now;
+  Date.now = () => realNow() - 3600 * 1000;
+  let stale;
+  try { stale = await cookieFor(user.id); } finally { Date.now = realNow; }
+
+  const refused = await call(env, '/api/auth/desktop-code', { cookie: stale, body: { code_challenge: challenge, max_age: 300 } });
+  assert.equal(refused.status, 401);
+  assert.equal(refused.body.error, 'login_required');
+  // Without max_age the same session still authorizes, as before.
+  assert.equal((await call(env, '/api/auth/desktop-code', { cookie: stale, body: { code_challenge: challenge } })).status, 200);
+  assert.equal((await call(env, '/api/auth/desktop-code', { cookie: fresh, body: { code_challenge: challenge, max_age: 300 } })).status, 200);
+});

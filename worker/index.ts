@@ -42,6 +42,7 @@ import {
   loginUserWithEmail,
   getOrCreateGitHubUser,
   getSessionUser,
+  getSession,
   passwordPolicyError,
   resetPassword,
   type CodePurpose,
@@ -778,19 +779,28 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // Authentication comes from the HttpOnly website session cookie. An optional
     // tenant_id selects the organization the desktop session acts in.
     if (url.pathname === '/api/auth/desktop-code' && request.method === 'POST') {
-      const user = await getSessionUser(env, request.headers.get('Cookie'));
-      if (!user) {
+      const session = await getSession(env, request.headers.get('Cookie'));
+      if (!session) {
         return new Response(JSON.stringify({ error: 'Authenticated user no longer exists' }), {
           status: 401,
           headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
         });
       }
+      const user = session.user;
       try {
         const body = (await request.json().catch(() => ({}))) as {
           code_challenge?: string;
           code_challenge_method?: string;
           tenant_id?: string;
+          /** Seconds since sign-in the session may be (the client asked for prompt=login). */
+          max_age?: number;
         };
+        if (typeof body.max_age === 'number' && Date.now() - session.signedInAt > Math.max(0, body.max_age) * 1000) {
+          return new Response(JSON.stringify({ error: 'login_required', error_description: 'Sign in again to authorize this client' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+          });
+        }
         if (!body.code_challenge) {
           return new Response(JSON.stringify({ error: 'code_challenge is required' }), {
             status: 400,

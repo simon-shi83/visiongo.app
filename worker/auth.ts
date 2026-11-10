@@ -25,6 +25,8 @@ export interface SessionPayload {
   googleSub?: string;
   authSubject?: string;
   exp: number; // Unix timestamp in ms
+  /** When the user signed in for this session (ms); absent in sessions created before it was recorded. */
+  iat?: number;
   /** users.session_version when the session was created; absent means 0. */
   sv?: number;
 }
@@ -331,7 +333,7 @@ export async function createSessionCookie(
 ): Promise<{ cookieHeader: string; sessionPayload: SessionPayload }> {
   if (!secretKey) throw new Error('SESSION_SECRET is not configured');
   const exp = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-  const sessionPayload: SessionPayload = { userId, googleSub: authSubject, authSubject, exp, sv: sessionVersion };
+  const sessionPayload: SessionPayload = { userId, googleSub: authSubject, authSubject, exp, iat: Date.now(), sv: sessionVersion };
 
   const encoder = new TextEncoder();
   const payloadJson = JSON.stringify(sessionPayload);
@@ -853,11 +855,16 @@ export async function getUserById(env: Env, userId: string): Promise<User | null
  * (no or forged cookie, expired, deleted user, or a password reset since sign-in).
  */
 export async function getSessionUser(env: Env, cookieHeader: string | null): Promise<User | null> {
+  return (await getSession(env, cookieHeader))?.user ?? null;
+}
+
+/** The signed-in user and when they signed in (0 when the session predates that record). */
+export async function getSession(env: Env, cookieHeader: string | null): Promise<{ user: User; signedInAt: number } | null> {
   const session = await verifySessionCookie(cookieHeader, env.SESSION_SECRET);
   if (!session) return null;
   const user = await getUserById(env, session.userId);
   if (!user || (session.sv || 0) !== (user.sessionVersion || 0)) return null;
-  return user;
+  return { user, signedInAt: session.iat || 0 };
 }
 
 /**
