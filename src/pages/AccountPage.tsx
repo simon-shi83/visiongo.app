@@ -7,12 +7,15 @@ import {
   ArrowRight,
   Package,
   Building2,
+  ShieldCheck,
 } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
 import { SeoHead } from '../components/SeoHead';
 import { AuthCard } from '../components/AuthCard';
 import { OrganizationPanel } from '../components/OrganizationPanel';
 import { DesktopSessionsPanel } from '../components/DesktopSessionsPanel';
+import { ChangePasswordPanel } from '../components/ChangePasswordPanel';
+import { PlatformAdminPanel } from '../components/PlatformAdminPanel';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -33,7 +36,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const { user, loading: authLoading, logout } = useAuth();
   const { locale } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'downloads' | 'history' | 'organizations'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'downloads' | 'history' | 'organizations' | 'admin'>('profile');
   const [downloadHistory, setDownloadHistory] = useState<UserDownloadRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const authParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
@@ -161,7 +164,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
             </div>
 
             {/* Navigation Tabs */}
-            <div className="flex items-center gap-2 border-b border-zinc-800 pb-3 font-mono text-xs">
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 pb-3 font-mono text-xs">
               <button
                 onClick={() => setActiveTab('profile')}
                 className={`px-4 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-2 ${
@@ -210,35 +213,32 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                 }`}
               >
                 <Building2 className="w-4 h-4" />
-                <span>{locale === 'zh' ? '组织' : 'Organizations'}</span>
+                <span>{locale === 'zh' ? '组织与成员' : 'Organizations'}</span>
               </button>
+
+              {user.role === 'super_admin' && (
+                <button
+                  onClick={() => setActiveTab('admin')}
+                  className={`px-4 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-2 ${
+                    activeTab === 'admin'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold'
+                      : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                  }`}
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>{locale === 'zh' ? '平台管理' : 'Platform admin'}</span>
+                </button>
+              )}
             </div>
 
-            {activeTab === 'organizations' && <OrganizationPanel locale={locale} />}
+            {activeTab === 'organizations' && <OrganizationPanel locale={locale} myEmail={user.email} />}
+            {activeTab === 'admin' && user.role === 'super_admin' && <PlatformAdminPanel locale={locale} />}
 
             {/* Tab 1: Profile Details */}
             {activeTab === 'profile' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
                 <DesktopSessionsPanel locale={locale} />
-                <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-4">
-                  <h4 className="text-xs font-mono uppercase tracking-wider text-zinc-400 font-semibold">
-                    {locale === 'zh' ? '账号安全与认证状态' : 'Security & Identity'}
-                  </h4>
-                  <div className="space-y-3 text-xs font-mono">
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-                      <span className="text-zinc-500">Identity Provider:</span>
-                      <span className="text-zinc-200">Google OpenID Connect</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-                      <span className="text-zinc-500">Session Status:</span>
-                      <span className="text-emerald-400 font-bold">Active (HttpOnly)</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-                      <span className="text-zinc-500">Production Licensing:</span>
-                      <span className="text-amber-400">Evaluation / Pilot</span>
-                    </div>
-                  </div>
-                </div>
+                <ChangePasswordPanel locale={locale} />
 
                 <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-4 flex flex-col justify-between">
                   <div>

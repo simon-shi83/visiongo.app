@@ -7,7 +7,8 @@
  *
  * - Every user has a personal organization (users.tenant_id) that they administer.
  * - Enterprise organizations are created by a platform administrator.
- * - Members are invited by email and join when they sign in with that verified email.
+ * - Members are added by email: an existing account joins at once, any other email
+ *   joins when it signs up or signs in with that verified email.
  */
 
 import type { Env, TenantSummary, User } from './types';
@@ -25,6 +26,8 @@ export interface OrganizationRow {
   status: 'active' | 'suspended';
   /** 1 when the organization lets VisionCloud use its data for AI (0007). */
   ai_data_authorized?: number;
+  /** Members and pending invitations (platform administrator listing only). */
+  member_count?: number;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -64,9 +67,23 @@ export async function ensurePersonalOrganization(env: Env, user: User): Promise<
  */
 async function acceptInvitations(env: Env, user: User): Promise<void> {
   const timestamp = now();
+  const { results } = await requireDatabase(env).prepare(
+    "UPDATE organization_members SET user_id = ?, status = 'active', joined_at = ?, updated_at = ? WHERE email = ? AND status = 'invited' RETURNING org_id"
+  ).bind(user.id, timestamp, timestamp, user.email.toLowerCase()).all<{ org_id: string }>();
+  const joined = results?.[0]?.org_id;
+  if (joined) await preferOrganization(env, user.id, joined);
+}
+
+/**
+ * Someone who joins an enterprise organization works in it from then on: it becomes
+ * the default of the next desktop sign-in, unless they already chose another
+ * enterprise organization (a personal organization picked by default is replaced).
+ */
+async function preferOrganization(env: Env, userId: string, orgId: string): Promise<void> {
   await requireDatabase(env).prepare(
-    "UPDATE organization_members SET user_id = ?, status = 'active', joined_at = ?, updated_at = ? WHERE email = ? AND status = 'invited'"
-  ).bind(user.id, timestamp, timestamp, user.email.toLowerCase()).run();
+    `UPDATE users SET last_tenant_id = ? WHERE id = ? AND (last_tenant_id IS NULL OR last_tenant_id = tenant_id
+       OR last_tenant_id NOT IN (SELECT id FROM organizations WHERE type = 'enterprise'))`
+  ).bind(orgId, userId).run();
 }
 
 /** Active organizations the user may act in; the personal organization comes first. */
@@ -115,7 +132,9 @@ export async function resolveTenant(env: Env, user: User, requested?: string | n
   }
   const row = await requireDatabase(env).prepare('SELECT last_tenant_id FROM users WHERE id = ?')
     .bind(user.id).first<{ last_tenant_id: string | null }>();
-  const tenant = find(row?.last_tenant_id) || find(user.tenantId) || tenants[0];
+  // Without a remembered choice an enterprise organization comes before the personal one:
+  // that is where invited engineers' work and AI data authorization live.
+  const tenant = find(row?.last_tenant_id) || tenants.find(item => item.type === 'enterprise') || find(user.tenantId) || tenants[0];
   return tenant ? { tenant, tenants, aiDataAuthorized: await aiDataAuthorized(env, tenant.tenant_id) } : null;
 }
 
@@ -151,6 +170,12 @@ async function activeAdminCount(env: Env, orgId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+async function accountIdByEmail(env: Env, email: string): Promise<string | null> {
+  const row = await requireDatabase(env).prepare('SELECT id FROM users WHERE LOWER(email) = ? ORDER BY created_at, id LIMIT 1')
+    .bind(email.toLowerCase()).first<{ id: string }>();
+  return row?.id ?? null;
+}
+
 async function readBody(request: Request): Promise<Record<string, unknown>> {
   const body = await request.json().catch(() => null);
   return body && typeof body === 'object' ? body as Record<string, unknown> : {};
@@ -179,7 +204,9 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
     let organizations: OrganizationRow[] | undefined;
     if (platformAdmin) {
       const { results } = await requireDatabase(env).prepare(
-        "SELECT id, name, type, status FROM organizations WHERE type = 'enterprise' ORDER BY name"
+        `SELECT o.id, o.name, o.type, o.status,
+                (SELECT count(*) FROM organization_members m WHERE m.org_id = o.id AND m.status <> 'removed') AS member_count
+         FROM organizations o WHERE o.type = 'enterprise' ORDER BY o.name`
       ).all<OrganizationRow>();
       organizations = results || [];
     }
@@ -198,12 +225,14 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
     const db = requireDatabase(env);
     const id = `org_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const timestamp = now();
+    const account = await accountIdByEmail(env, adminEmail);
     await db.batch([
       db.prepare("INSERT INTO organizations (id, name, type, status, created_by, created_at) VALUES (?, ?, 'enterprise', 'active', ?, ?)")
         .bind(id, name, user.id, timestamp),
-      db.prepare("INSERT INTO organization_members (org_id, email, user_id, role, status, invited_by, created_at, joined_at, updated_at) VALUES (?, ?, NULL, 'admin', 'invited', ?, ?, NULL, ?)")
-        .bind(id, adminEmail, user.id, timestamp, timestamp),
+      db.prepare("INSERT INTO organization_members (org_id, email, user_id, role, status, invited_by, created_at, joined_at, updated_at) VALUES (?, ?, ?, 'admin', ?, ?, ?, ?, ?)")
+        .bind(id, adminEmail, account, account ? 'active' : 'invited', user.id, timestamp, account ? timestamp : null, timestamp),
     ]);
+    if (account) await preferOrganization(env, account, id);
     await recordEvent(env, id, user.id, 'organization.created', adminEmail, name);
     return json({ organization: { id, name, type: 'enterprise', status: 'active' } }, 201);
   }
@@ -270,15 +299,19 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
   if (action === 'members') {
     const role = parseRole(body.role ?? 'member');
     if (!role) return json({ error: 'role must be admin or member' }, 400);
-    if (existing && existing.status !== 'removed') return json({ error: 'This email is already a member or invited' }, 409);
+    if (existing && existing.status !== 'removed') return json({ error: '该邮箱已经是成员或已被邀请' }, 409);
+    // An email that already has an account joins at once (it would on its next sign-in anyway).
+    const account = await accountIdByEmail(env, email);
+    const status: MemberStatus = account ? 'active' : 'invited';
     await db.prepare(
       `INSERT INTO organization_members (org_id, email, user_id, role, status, invited_by, created_at, joined_at, updated_at)
-       VALUES (?, ?, NULL, ?, 'invited', ?, ?, NULL, ?)
-       ON CONFLICT(org_id, email) DO UPDATE SET user_id = NULL, role = excluded.role, status = 'invited',
-         invited_by = excluded.invited_by, joined_at = NULL, updated_at = excluded.updated_at`
-    ).bind(orgId, email, role, user.id, timestamp, timestamp).run();
-    await recordEvent(env, orgId, user.id, 'member.invited', email, role);
-    return json({ member: { email, role, status: 'invited' } }, 201);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(org_id, email) DO UPDATE SET user_id = excluded.user_id, role = excluded.role, status = excluded.status,
+         invited_by = excluded.invited_by, joined_at = excluded.joined_at, updated_at = excluded.updated_at`
+    ).bind(orgId, email, account, role, status, user.id, timestamp, account ? timestamp : null, timestamp).run();
+    if (account) await preferOrganization(env, account, orgId);
+    await recordEvent(env, orgId, user.id, account ? 'member.added' : 'member.invited', email, role);
+    return json({ member: { email, role, status } }, 201);
   }
 
   if (!existing || existing.status === 'removed') return json({ error: 'Member not found' }, 404);

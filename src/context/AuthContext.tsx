@@ -6,6 +6,8 @@ export interface AuthUser {
   displayName?: string;
   avatarUrl?: string;
   createdAt: string;
+  /** Platform-wide role; super_admin sees the platform administration tab. */
+  role?: 'super_admin' | 'org_admin' | 'member';
 }
 
 interface AuthContextType {
