@@ -727,6 +727,10 @@ test('an invited engineer who signs up works in the enterprise organization by d
   assert.equal(invited.body.member.status, 'invited');
   const listing = await call(env, '/api/orgs', { cookie: rootCookie });
   assert.equal(listing.body.organizations[0].member_count, 2);
+  assert.equal(listing.body.cloud_admin_url, null);
+  env.CLOUD_API_URL = 'https://cloud.example';
+  assert.equal((await call(env, '/api/orgs', { cookie: rootCookie })).body.cloud_admin_url, 'https://cloud.example/v1/admin');
+  delete env.CLOUD_API_URL;
 
   const engineer = await auth.registerUserWithEmail(env, 'eng@example.com', 'eng12345');
   const login = await desktopLogin(env, engineer.user.id);

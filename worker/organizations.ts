@@ -211,7 +211,9 @@ export async function handleOrganizationApi(request: Request, env: Env, url: URL
       organizations = results || [];
     }
     return json({ tenants, current_tenant_id: resolved?.tenant.tenant_id ?? null,
-                  is_platform_admin: platformAdmin, organizations, credits_available: cloudApiUrl(env) !== null });
+                  is_platform_admin: platformAdmin, organizations, credits_available: cloudApiUrl(env) !== null,
+                  // Where platform administrators open VisionCloud accounts and add credits.
+                  cloud_admin_url: platformAdmin && cloudApiUrl(env) ? `${cloudApiUrl(env)}/v1/admin` : null });
   }
 
   if (url.pathname === '/api/orgs' && request.method === 'POST') {

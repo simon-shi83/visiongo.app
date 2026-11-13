@@ -56,6 +56,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale, my
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [platformAdmin, setPlatformAdmin] = useState(false);
   const [creditsAvailable, setCreditsAvailable] = useState(false);
+  const [cloudAdminUrl, setCloudAdminUrl] = useState<string | null>(null);
   const [allOrganizations, setAllOrganizations] = useState<Organization[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -74,6 +75,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale, my
     setTenants(data.tenants || []);
     setPlatformAdmin(!!data.is_platform_admin);
     setCreditsAvailable(!!data.credits_available);
+    setCloudAdminUrl(data.cloud_admin_url || null);
     setAllOrganizations(data.organizations || []);
   }, [zh]);
 
@@ -316,7 +318,12 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale, my
               event.preventDefault();
               void run(() => send('/api/orgs', { name: newName, admin_email: newAdminEmail || myEmail }),
                        async () => { setNewName(''); setNewAdminEmail(''); await load(); },
-                       data => { if (data.organization?.id) manage(data.organization.id); });
+                       data => {
+                         if (!data.organization?.id) return;
+                         manage(data.organization.id);
+                         if (creditsAvailable) setNotice(zh ? '企业组织已创建。它在 VisionCloud 的额度是 0：请在下方“额度与用量”按提示开户并充值，否则成员用 AI 会提示额度不足。'
+                                                            : 'Organization created. It has no VisionCloud credits yet: see Credits and usage below.');
+                       });
             }}
           >
             <input required value={newName} onChange={event => setNewName(event.target.value)}
@@ -368,7 +375,7 @@ export const OrganizationPanel: React.FC<OrganizationPanelProps> = ({ locale, my
       )}
 
       {creditsAvailable ? (
-        tenants.length > 0 && <CreditsPanel locale={locale} organizations={[...creditOrganizations.values()]} />
+        tenants.length > 0 && <CreditsPanel locale={locale} organizations={[...creditOrganizations.values()]} cloudAdminUrl={cloudAdminUrl} initialOrganization={selected} />
       ) : (
         <p className="text-xs text-zinc-500">{zh ? '本版本尚未开通云端服务，暂无额度与用量。' : 'Cloud services are not available in this edition yet.'}</p>
       )}
