@@ -115,8 +115,12 @@ test('desktop token carries the selected organization, both audiences and the ef
   const boss = addUser(env, 'boss', 'Boss@Factory.example');
   const orgId = await enterprise(env, root.id);
 
-  // Personal organization by default; the invitation is accepted on first use.
-  const personal = await desktopLogin(env, boss.id);
+  // An existing account joins the new organization at once and works in it by default.
+  const first = await desktopLogin(env, boss.id);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.tenant_id, orgId);
+  assert.equal(first.body.tenant_type, 'enterprise');
+  const personal = await desktopLogin(env, boss.id, boss.tenant);
   assert.equal(personal.status, 200);
   assert.equal(personal.body.tenant_id, boss.tenant);
   assert.equal(personal.body.tenant_type, 'personal');
@@ -192,7 +196,7 @@ test('a removed member can no longer refresh into the organization but can switc
   assert.equal(back.body.tenant_id, alice.tenant);
   assert.deepEqual(back.body.tenants.map(item => item.tenant_id), [alice.tenant]);
   const events = env.DB.sqlite.prepare('SELECT action, target_email FROM organization_events WHERE org_id = ? ORDER BY created_at, rowid').all(orgId);
-  assert.deepEqual(events.map(row => row.action), ['organization.created', 'member.invited', 'member.removed']);
+  assert.deepEqual(events.map(row => row.action), ['organization.created', 'member.added', 'member.removed']);
 });
 
 test('a refresh token that was never recorded is refused, even when correctly signed', async () => {
@@ -639,4 +643,102 @@ test('prompt=login (max_age) refuses an old browser session until the user signs
   // Without max_age the same session still authorizes, as before.
   assert.equal((await call(env, '/api/auth/desktop-code', { cookie: stale, body: { code_challenge: challenge } })).status, 200);
   assert.equal((await call(env, '/api/auth/desktop-code', { cookie: fresh, body: { code_challenge: challenge, max_age: 300 } })).status, 200);
+});
+
+test('platform administrators create accounts, reset passwords and issue codes without email delivery', async () => {
+  const env = environment();
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const boss = addUser(env, 'boss', 'boss@factory.example');
+  const rootCookie = await cookieFor(root.id);
+  assert.equal((await call(env, '/api/admin/users', { cookie: await cookieFor(boss.id) })).status, 403);
+  assert.equal((await call(env, '/api/admin/users', { cookie: await cookieFor(boss.id), body: { email: 'x@example.com' } })).status, 403);
+  assert.equal((await call(env, '/api/auth/config')).body.emailDelivery, false);
+
+  // Create: a temporary password, shown once, that signs in.
+  const created = await call(env, '/api/admin/users', { cookie: rootCookie, body: { email: 'Engineer@Example.com', display_name: '工程师' } });
+  assert.equal(created.status, 201);
+  const temporary = created.body.temporary_password;
+  assert.match(temporary, /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{12}$/);
+  assert.equal((await call(env, '/api/auth/email/login', { body: { email: 'engineer@example.com', password: temporary } })).status, 200);
+  assert.equal((await call(env, '/api/admin/users', { cookie: rootCookie, body: { email: 'engineer@example.com' } })).status, 409);
+  const listed = await call(env, '/api/admin/users?q=engineer', { cookie: rootCookie });
+  assert.deepEqual(listed.body.users.map(item => [item.email, item.display_name, item.has_password]), [['engineer@example.com', '工程师', 1]]);
+  assert.equal(JSON.stringify(listed.body).includes('password_hash'), false);
+
+  // Reset: the old password stops working, the new one works.
+  const reset = await call(env, '/api/admin/users/reset-password', { cookie: rootCookie, body: { email: 'engineer@example.com' } });
+  assert.equal(reset.status, 200);
+  assert.equal((await call(env, '/api/auth/email/login', { body: { email: 'engineer@example.com', password: temporary } })).status, 401);
+  assert.equal((await call(env, '/api/auth/email/login', { body: { email: 'engineer@example.com', password: reset.body.temporary_password } })).status, 200);
+  assert.equal((await call(env, '/api/admin/users/reset-password', { cookie: rootCookie, body: { email: 'nobody@example.com' } })).status, 404);
+
+  // A sign-up code lasts a day and survives a press of "send code" while email is not configured.
+  const code = await call(env, '/api/admin/users/code', { cookie: rootCookie, body: { email: 'new@example.com', purpose: 'register' } });
+  assert.equal(code.status, 200);
+  assert.match(code.body.code, /^\d{6}$/);
+  assert.ok(Date.parse(code.body.expires_at) - Date.now() > 23 * 3600 * 1000);
+  const send = await call(env, '/api/auth/email/send-code', { body: { email: 'new@example.com', purpose: 'register' } });
+  assert.equal(send.status, 503);
+  assert.equal(send.body.code, 'email_not_configured');
+  const registered = await call(env, '/api/auth/email/register', { body: { email: 'new@example.com', code: code.body.code, password: 'abc12345' } });
+  assert.equal(registered.status, 200);
+  assert.equal((await call(env, '/api/admin/users/code', { cookie: rootCookie, body: { email: 'new@example.com', purpose: 'register' } })).status, 409);
+  const resetCode = await call(env, '/api/admin/users/code', { cookie: rootCookie, body: { email: 'new@example.com', purpose: 'reset' } });
+  assert.equal((await call(env, '/api/auth/email/reset-password', { body: { email: 'new@example.com', code: resetCode.body.code, password: 'xyz98765' } })).status, 200);
+
+  const events = env.DB.sqlite.prepare("SELECT action, target_email FROM organization_events WHERE org_id = 'platform' ORDER BY created_at, rowid").all();
+  assert.deepEqual(events.map(row => row.action), ['account.created_by_admin', 'account.password_reset_by_admin',
+                                                   'account.register_code_by_admin', 'account.reset_code_by_admin']);
+  assert.equal(JSON.stringify(events).includes(temporary), false);
+
+  // Editions without email sign-in only list accounts.
+  env.AUTH_METHODS = 'google,github';
+  assert.equal((await call(env, '/api/admin/users', { cookie: rootCookie, body: { email: 'other@example.com' } })).status, 400);
+  assert.equal((await call(env, '/api/admin/users', { cookie: rootCookie })).status, 200);
+});
+
+test('signed-in users change their password; other browsers are signed out', async () => {
+  const env = environment();
+  const registered = await auth.registerUserWithEmail(env, 'me@example.com', 'first1234');
+  const cookie = await cookieFor(registered.user.id);
+  assert.deepEqual((await call(env, '/api/account/password', { cookie })).body, { has_password: true, email_sign_in: true });
+  assert.equal((await call(env, '/api/account/password', { cookie, body: { current_password: 'wrong1234', new_password: 'second1234' } })).status, 400);
+  assert.equal((await call(env, '/api/account/password', { cookie, body: { current_password: 'first1234', new_password: 'short' } })).status, 400);
+  assert.equal((await call(env, '/api/account/password', { cookie, body: { current_password: 'first1234', new_password: 'second1234' } })).status, 200);
+  assert.equal((await call(env, '/api/account/password', { cookie })).status, 401);
+  assert.equal((await call(env, '/api/auth/email/login', { body: { email: 'me@example.com', password: 'first1234' } })).status, 401);
+  assert.equal((await call(env, '/api/auth/email/login', { body: { email: 'me@example.com', password: 'second1234' } })).status, 200);
+
+  // An account without a password may set one right after signing in.
+  const google = addUser(env, 'g', 'g@example.com');
+  const fresh = await cookieFor(google.id);
+  assert.equal((await call(env, '/api/account/password', { cookie: fresh })).body.has_password, false);
+  assert.equal((await call(env, '/api/account/password', { cookie: fresh, body: { new_password: 'third1234' } })).status, 200);
+});
+
+test('an invited engineer who signs up works in the enterprise organization by default', async () => {
+  const env = environment();
+  const root = addUser(env, 'root', 'root@visiongo.app', 'super_admin');
+  const created = await call(env, '/api/orgs', { cookie: await cookieFor(root.id), body: { name: '本公司', admin_email: 'root@visiongo.app' } });
+  const orgId = created.body.organization.id;
+  const rootCookie = await cookieFor(root.id);
+  assert.equal((await call(env, `/api/orgs/${orgId}/members`, { cookie: rootCookie })).body.members[0].status, 'active');
+  const invited = await call(env, `/api/orgs/${orgId}/members`, { cookie: rootCookie, body: { email: 'eng@example.com' } });
+  assert.equal(invited.body.member.status, 'invited');
+  const listing = await call(env, '/api/orgs', { cookie: rootCookie });
+  assert.equal(listing.body.organizations[0].member_count, 2);
+  assert.equal(listing.body.cloud_admin_url, null);
+  env.CLOUD_API_URL = 'https://cloud.example';
+  assert.equal((await call(env, '/api/orgs', { cookie: rootCookie })).body.cloud_admin_url, 'https://cloud.example/v1/admin');
+  delete env.CLOUD_API_URL;
+
+  const engineer = await auth.registerUserWithEmail(env, 'eng@example.com', 'eng12345');
+  const login = await desktopLogin(env, engineer.user.id);
+  assert.equal(login.status, 200);
+  assert.equal(login.body.tenant_id, orgId);
+  assert.deepEqual(login.body.tenants.map(item => item.type), ['personal', 'enterprise']);
+
+  // An explicit later choice of the personal organization is kept.
+  await desktopLogin(env, engineer.user.id, engineer.user.tenantId);
+  assert.equal((await desktopLogin(env, engineer.user.id)).body.tenant_id, engineer.user.tenantId);
 });

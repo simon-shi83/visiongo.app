@@ -29,6 +29,15 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // False while the site cannot send email: codes then come from a platform administrator.
+  const [emailDelivery, setEmailDelivery] = useState(true);
+  useEffect(() => {
+    fetch('/api/auth/config')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => { if (data && data.emailDelivery === false) setEmailDelivery(false); })
+      .catch(() => undefined);
+  }, []);
+
   // 60-second countdown for code resend
   useEffect(() => {
     if (countdown > 0) {
@@ -212,7 +221,12 @@ export const EmailAuthForm: React.FC<EmailAuthFormProps> = ({ onSuccess, classNa
                   : (locale === 'zh' ? '获取验证码' : 'Send Code')}
               </button>
             </div>
-
+            {!emailDelivery && (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                {zh ? '本站暂不能发送邮件。请向管理员索取验证码（24 小时内有效），直接填在上面，不要点“获取验证码”。'
+                    : 'This site cannot send email yet. Ask an administrator for a code and enter it above.'}
+              </p>
+            )}
           </div>
         )}
 

@@ -51,6 +51,7 @@ import { authMethods, methodDisabledResponse, methodEnabled } from './authMethod
 import { handleReleaseAdmin, handleReleaseManifest } from './releases';
 import { deviceName, handleDesktopSessionApi, inspectRefreshToken, issueRefreshToken, revokeUserSessions, revokeWithRefreshToken, rotateRefreshToken } from './desktopSessions';
 import { withErrorCode } from './errorCodes';
+import { handleAccountApi, handleAdminUsersApi } from './accountAdmin';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_SENT = '验证码已发送至您的邮箱，10 分钟内有效';
@@ -401,6 +402,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       return new Response(
         JSON.stringify({
           methods: authMethods(env),
+          // False while this edition cannot send email: codes then come from a platform administrator.
+          emailDelivery: !!env.RESEND_API_KEY,
           googleClientId: methodEnabled(env, 'google') ? env.GOOGLE_CLIENT_ID || null : null,
           githubClientId: methodEnabled(env, 'github') ? env.GITHUB_CLIENT_ID || null : null,
           // Pages /auth/desktop may return an authorization code to (exact match).
@@ -430,6 +433,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         if (!await allowRequest(env, 'email-code-hour', email, 5, 3600)) return json({ error: '验证码申请过于频繁，请一小时后再试' }, 429);
         const address = request.headers.get('CF-Connecting-IP');
         if (address && !await allowRequest(env, 'email-code-ip', address, 20, 3600)) return json({ error: '请求过于频繁，请稍后再试' }, 429);
+
+        // Without email delivery nothing is sent, and a code an administrator issued stays valid.
+        if (!env.RESEND_API_KEY) {
+          return json({ error: '本站暂未开通邮件发送，请向管理员索取验证码，收到后直接填入下方', code: 'email_not_configured' }, 503);
+        }
 
         const existing = await getUserByEmail(env, email);
         if (purpose === 'register' && existing) return json({ error: '该邮箱已被注册，请直接登录' }, 400);
@@ -753,6 +761,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
             displayName: user.displayName,
             avatarUrl: user.avatarUrl,
             createdAt: user.createdAt,
+            role: user.role,
           },
         }),
         {
@@ -982,6 +991,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     }
 
     // Organizations and members for the account page (session cookie).
+    const accountResponse = await handleAccountApi(request, env, url);
+    if (accountResponse) return accountResponse;
+    const adminUsersResponse = await handleAdminUsersApi(request, env, url);
+    if (adminUsersResponse) return adminUsersResponse;
+
     const desktopSessionResponse = await handleDesktopSessionApi(request, env, url);
     if (desktopSessionResponse) return desktopSessionResponse;
 

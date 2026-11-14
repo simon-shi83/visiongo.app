@@ -60,9 +60,14 @@ async function get(path: string): Promise<{ ok: boolean; status: number; data: a
   return { ok: response.ok, status: response.status, data: await response.json().catch(() => ({})) };
 }
 
-export const CreditsPanel: React.FC<{ locale: string; organizations: CreditsOrganization[] }> = ({ locale, organizations }) => {
+export const CreditsPanel: React.FC<{ locale: string; organizations: CreditsOrganization[]; cloudAdminUrl?: string | null;
+                                     initialOrganization?: string | null }> = ({ locale, organizations, cloudAdminUrl, initialOrganization }) => {
   const zh = locale === 'zh';
   const [selected, setSelected] = useState(organizations[0]?.id ?? '');
+  // Follow the organization chosen for member management.
+  useEffect(() => {
+    if (initialOrganization && organizations.some(item => item.id === initialOrganization)) setSelected(initialOrganization);
+  }, [initialOrganization]);
   const [days, setDays] = useState(30);
   const [account, setAccount] = useState<Account | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -124,6 +129,21 @@ export const CreditsPanel: React.FC<{ locale: string; organizations: CreditsOrga
       </div>
       {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-3 text-xs text-red-300">{error}</p>}
 
+      {organization?.admin && account && organization.type === 'enterprise' && (!account.opened || account.balance_micros <= 0) && (
+        <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs text-amber-200 space-y-1">
+          <p>{zh ? '这个企业组织在 VisionCloud 还没有额度，成员使用 AI 功能时会提示“组织额度不足”。'
+                 : 'This enterprise organization has no VisionCloud credits yet; AI functions answer "insufficient credits".'}</p>
+          <p className="text-amber-300/80">
+            {cloudAdminUrl
+              ? <>{zh ? '平台管理员请到 ' : 'Platform administrators: open the account and recharge at '}
+                  <a href={cloudAdminUrl} target="_blank" rel="noreferrer" className="underline">{zh ? 'VisionCloud 管理后台' : 'VisionCloud admin'}</a>
+                  {zh ? ' 为它开户并充值（首次充值勾选“开户”），组织 ID：' : ' (tick "open account" on the first recharge); organization ID: '}
+                  <span className="font-mono">{organization.id}</span></>
+              : (zh ? '请联系 VISIONGO 开通额度。' : 'Contact VISIONGO to add credits.')}
+          </p>
+        </div>
+      )}
+
       {organization?.admin && account && (
         account.opened ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -142,8 +162,10 @@ export const CreditsPanel: React.FC<{ locale: string; organizations: CreditsOrga
           </div>
         ) : (
           <p className="text-xs text-zinc-400">
-            {zh ? '该组织尚未使用过 VisionCloud，首次使用时自动开立额度账户' : 'This organization has not used VisionCloud yet; its credit account opens on first use'}
-            {organization.type === 'personal' && (zh ? '（个人组织赠送 100 Credits 体验额度）。' : ' (personal organizations receive 100 trial Credits).')}
+            {organization.type === 'personal'
+              ? (zh ? '该组织尚未使用过 VisionCloud，首次使用时自动开立额度账户（个人组织赠送 100 Credits 体验额度）。'
+                    : 'This organization has not used VisionCloud yet; its credit account opens on first use (personal organizations receive 100 trial Credits).')
+              : (zh ? '该企业组织尚未在 VisionCloud 开户。' : 'This enterprise organization has no VisionCloud account yet.')}
           </p>
         )
       )}

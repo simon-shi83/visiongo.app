@@ -207,7 +207,7 @@ export function passwordPolicyError(password: string): string | null {
   return problem ? passwordProblemText(problem, true) : null;
 }
 
-function equalStrings(a: string, b: string): boolean {
+export function equalStrings(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let difference = 0;
   for (let i = 0; i < a.length; i++) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -250,12 +250,13 @@ export function generateVerificationCode(): string {
   return String(100000 + values[0] % 900000);
 }
 
-export async function saveVerificationCode(env: Env, email: string, code: string, purpose = 'register'): Promise<void> {
+export async function saveVerificationCode(env: Env, email: string, code: string, purpose = 'register',
+                                           ttlMs = 600000): Promise<void> {
   const db = requireDatabase(env);
   await db.batch([
     db.prepare('DELETE FROM email_verification_codes WHERE email = ? AND purpose = ?').bind(email.toLowerCase().trim(), purpose),
     db.prepare('INSERT INTO email_verification_codes (id, email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(`code_${crypto.randomUUID()}`, email.toLowerCase().trim(), code, purpose, Date.now() + 600000, new Date().toISOString()),
+      .bind(`code_${crypto.randomUUID()}`, email.toLowerCase().trim(), code, purpose, Date.now() + ttlMs, new Date().toISOString()),
   ]);
 }
 
